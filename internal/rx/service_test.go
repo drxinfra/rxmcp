@@ -120,8 +120,28 @@ func TestWrite(t *testing.T) {
 	f := newFake(t)
 	s := newSvc(t, f)
 	ctx := context.Background()
-	if err := s.CompleteAssignment(ctx, 102, "Accept"); err != nil {
-		t.Fatal(err)
+	simple, _, _ := s.GetAssignment(ctx, 102)
+	if simple.Kind() != "SimpleAssignment" || simple.ResultsHint() != "Complete (выполнено)" {
+		t.Errorf("kind/results: %s / %s", simple.Kind(), simple.ResultsHint())
+	}
+	if res, err := s.CompleteAssignment(ctx, simple, ""); err != nil || res != "Complete" {
+		t.Fatalf("простое без result должно уйти как Complete: %v %q", err, res)
+	}
+	review, _, _ := s.GetAssignment(ctx, 555)
+	if _, err := s.CompleteAssignment(ctx, review, "Whatever"); err == nil || !strings.Contains(err.Error(), "недопустим") || !strings.Contains(err.Error(), "Accepted (принять)") {
+		t.Errorf("неверный result для приёмки: ожидали понятную ошибку с подсказкой, получили %v", err)
+	}
+	if res, err := s.CompleteAssignment(ctx, review, "Accept"); err != nil || res != "Accepted" {
+		t.Errorf("Accept должен приводиться к Accepted: %v %q", err, res)
+	}
+	if res, err := s.CompleteAssignment(ctx, review, "принять"); err != nil || res != "Accepted" {
+		t.Errorf("синоним «принять»: %v %q", err, res)
+	}
+	if res, err := s.CompleteAssignment(ctx, review, ""); err != nil || res != "Accepted" {
+		t.Errorf("приёмка без result: %v %q", err, res)
+	}
+	if _, err := s.CreateSimpleTask(ctx, rx.SimpleTaskInput{Subject: "без срока", PerformerIDs: []int64{9}}); err == nil || !strings.Contains(err.Error(), "срок") {
+		t.Errorf("без срока должна быть понятная ошибка: %v", err)
 	}
 	dl := time.Date(2026, 9, 12, 15, 0, 0, 0, time.UTC)
 	id, err := s.CreateSimpleTask(ctx, rx.SimpleTaskInput{Subject: "Тест", PerformerIDs: []int64{9}, Deadline: &dl, Importance: "high", Start: true})
@@ -131,20 +151,18 @@ func TestWrite(t *testing.T) {
 	if err := s.AbortTask(ctx, 777); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.actions) != 4 {
-		t.Fatalf("actions: %+v", f.actions)
-	}
-	if f.actions[0]["_action"] != "Docflow/CompleteAssignment" || f.actions[0]["result"] != "Accept" || f.actions[0]["assignmentId"] != float64(102) {
+	if f.actions[0]["_action"] != "Docflow/CompleteAssignment" || f.actions[0]["result"] != "Complete" || f.actions[0]["assignmentId"] != float64(102) {
 		t.Errorf("complete: %+v", f.actions[0])
 	}
-	if f.actions[1]["assignmentType"] != "Assignment" || f.actions[1]["importance"] != "High" || f.actions[1]["deadline"] != "2026-09-12T15:00:00Z" {
-		t.Errorf("create: %+v", f.actions[1])
+	n := len(f.actions)
+	if f.actions[n-3]["assignmentType"] != "Assignment" || f.actions[n-3]["importance"] != "High" || f.actions[n-3]["deadline"] != "2026-09-12T15:00:00Z" {
+		t.Errorf("create: %+v", f.actions[n-3])
 	}
-	if f.actions[2]["_action"] != "Docflow/StartTask" || f.actions[2]["taskId"] != float64(777) {
-		t.Errorf("start: %+v", f.actions[2])
+	if f.actions[n-2]["_action"] != "Docflow/StartTask" || f.actions[n-2]["taskId"] != float64(777) {
+		t.Errorf("start: %+v", f.actions[n-2])
 	}
-	if f.actions[3]["_action"] != "Shell/AbortTask" {
-		t.Errorf("abort: %+v", f.actions[3])
+	if f.actions[n-1]["_action"] != "Shell/AbortTask" {
+		t.Errorf("abort: %+v", f.actions[n-1])
 	}
 	if _, err := s.CreateSimpleTask(ctx, rx.SimpleTaskInput{Subject: "x"}); err == nil {
 		t.Error("без исполнителей должна быть ошибка")

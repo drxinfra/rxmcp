@@ -62,6 +62,9 @@ func (e *Error) Error() string {
 	case 403:
 		return "нет прав (403): у этой учётки нет доступа к объекту или к сервису интеграции"
 	case 404:
+		if e.Method == "POST" {
+			return "RX вернул 404 на действие " + e.Path + ": так он отвечает, когда не хватает обязательного параметра (например, срока или результата) или объект недоступен"
+		}
 		return "объект не найден или недоступен (404)"
 	}
 	if e.Detail != "" {
@@ -263,6 +266,13 @@ func (c *Client) Action(ctx context.Context, module, action string, params map[s
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	c.debug("POST", path, resp.StatusCode, len(data))
+	if Debug && resp.StatusCode >= 300 {
+		b := data
+		if len(b) > 600 {
+			b = b[:600]
+		}
+		fmt.Fprintf(os.Stderr, "rxmcp: тело ответа: %s\n", string(b))
+	}
 	if resp.StatusCode >= 300 {
 		return nil, &Error{Status: resp.StatusCode, Method: "POST", Path: path, Detail: detail(data)}
 	}
@@ -315,13 +325,26 @@ func detail(data []byte) string {
 		} `json:"error"`
 	}
 	if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
-		m := e.Error.Message
-		if len(m) > 300 {
-			m = m[:300] + "…"
-		}
-		return m
+		return cutStr(e.Error.Message, 300)
+	}
+	// RX часто отвечает голой JSON-строкой или текстом.
+	var str string
+	if json.Unmarshal(data, &str) == nil && str != "" {
+		return cutStr(str, 300)
+	}
+	t := strings.TrimSpace(string(data))
+	if t != "" && !strings.HasPrefix(t, "<") {
+		return cutStr(t, 300)
 	}
 	return ""
+}
+
+func cutStr(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 func netErr(err error) error {

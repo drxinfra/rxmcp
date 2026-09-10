@@ -187,7 +187,10 @@ func (f Formatter) Thread(texts []Text, limit int) string {
 func (f Formatter) AssignmentCard(a Assignment, attachments []Ref) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Задание #%d: %s\n", a.ID, a.Subject)
-	fmt.Fprintf(&b, "Статус: %s · важность: %s\n", Status(a.Status), importance(a.Importance))
+	fmt.Fprintf(&b, "Тип: %s · статус: %s · важность: %s\n", a.KindRu(), Status(a.Status), importance(a.Importance))
+	if a.Status == "InProcess" {
+		fmt.Fprintf(&b, "Варианты завершения (result для rx_complete_assignment): %s\n", a.ResultsHint())
+	}
 	fmt.Fprintf(&b, "Исполнитель: %s · автор: %s\n", name(a.Performer), name(a.Author))
 	fmt.Fprintf(&b, "Создано: %s · срок: %s\n", f.DateTime(a.Created), f.Deadline(a.Deadline))
 	if a.Completed != nil {

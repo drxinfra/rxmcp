@@ -531,14 +531,93 @@ func (s *Service) FindEmployees(ctx context.Context, q string, includeInactive b
 
 // --- запись ---
 
-// CompleteAssignment выполняет задание.
-func (s *Service) CompleteAssignment(ctx context.Context, id int64, result string) error {
-	params := map[string]any{"assignmentId": id}
-	if result != "" {
-		params["result"] = result
+// Kind возвращает тип задания по @odata.type: SimpleAssignment, ReviewAssignment, ApprovalAssignment…
+func (a *Assignment) Kind() string {
+	t := a.Type
+	if i := strings.LastIndex(t, "."); i >= 0 {
+		t = t[i+1:]
 	}
-	_, err := s.c.Action(ctx, "Docflow", "CompleteAssignment", params)
-	return err
+	t = strings.TrimPrefix(t, "I")
+	return strings.TrimSuffix(t, "Dto")
+}
+
+// KindRu человеческое имя типа задания.
+func (a *Assignment) KindRu() string {
+	switch a.Kind() {
+	case "SimpleAssignment":
+		return "простое задание"
+	case "ReviewAssignment":
+		return "приёмка работ"
+	case "Notice":
+		return "уведомление"
+	case "":
+		return "задание"
+	}
+	return a.Kind()
+}
+
+// Результаты, которые платформа принимает для стандартных типов заданий (проверено вживую).
+var assignmentResults = map[string][]string{
+	"SimpleAssignment": {"Complete"},
+	"ReviewAssignment": {"Accepted", "ForRework"},
+}
+
+var resultRu = map[string]string{"Complete": "выполнено", "Accepted": "принять", "ForRework": "на доработку"}
+
+// Results допустимые результаты для типа задания (пусто, если тип нестандартный).
+func (a *Assignment) Results() []string { return assignmentResults[a.Kind()] }
+
+// ResultsHint строка для карточки: что передавать в result.
+func (a *Assignment) ResultsHint() string {
+	r := a.Results()
+	if len(r) == 0 {
+		return "результат зависит от прикладного типа задания, посмотрите варианты в RX"
+	}
+	parts := make([]string, 0, len(r))
+	for _, v := range r {
+		parts = append(parts, fmt.Sprintf("%s (%s)", v, resultRu[v]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// normalizeResult приводит синонимы к значению перечисления RX.
+func normalizeResult(kind, in string) string {
+	v := strings.ToLower(strings.TrimSpace(in))
+	switch v {
+	case "", "default", "ok", "да":
+		switch kind {
+		case "ReviewAssignment":
+			return "Accepted"
+		case "SimpleAssignment":
+			return "Complete"
+		}
+		return ""
+	case "complete", "completed", "done", "выполнено", "выполнить", "готово":
+		return "Complete"
+	case "accept", "accepted", "принять", "принято", "приём", "прием":
+		return "Accepted"
+	case "forrework", "rework", "на доработку", "доработка", "вернуть", "reject":
+		return "ForRework"
+	}
+	return strings.TrimSpace(in)
+}
+
+// CompleteAssignment выполняет задание. Результат обязателен для RX: без него сервер отвечает 404.
+// Если result пустой, берётся стандартный для типа задания; синонимы вроде «принять» приводятся к значениям RX.
+func (s *Service) CompleteAssignment(ctx context.Context, a *Assignment, result string) (string, error) {
+	res := normalizeResult(a.Kind(), result)
+	if res == "" {
+		return "", fmt.Errorf("для задания типа %s нужен явный result: %s", a.KindRu(), a.ResultsHint())
+	}
+	_, err := s.c.Action(ctx, "Docflow", "CompleteAssignment", map[string]any{"assignmentId": a.ID, "result": res})
+	if err != nil {
+		var oe *odata.Error
+		if errors.As(err, &oe) && oe.Status == 400 {
+			return res, fmt.Errorf("RX не принял результат %q: %s. Допустимые: %s", res, oe.Detail, a.ResultsHint())
+		}
+		return res, err
+	}
+	return res, nil
 }
 
 // SimpleTaskInput параметры простой задачи.
@@ -562,6 +641,9 @@ func (s *Service) CreateSimpleTask(ctx context.Context, in SimpleTaskInput) (int
 	if len(in.PerformerIDs) == 0 {
 		return 0, errors.New("нужен хотя бы один исполнитель (Id сотрудника, см. rx_find_employees)")
 	}
+	if in.Deadline == nil {
+		return 0, errors.New("нужен срок (deadline): RX не создаёт простую задачу без срока")
+	}
 	at := "Assignment"
 	if in.Notice {
 		at = "Notice"
@@ -582,9 +664,7 @@ func (s *Service) CreateSimpleTask(ctx context.Context, in SimpleTaskInput) (int
 		"observerIds":    nz(in.ObserverIDs),
 		"documentIds":    nz(in.DocumentIDs),
 	}
-	if in.Deadline != nil {
-		params["deadline"] = in.Deadline.UTC().Format(time.RFC3339)
-	}
+	params["deadline"] = in.Deadline.UTC().Format(time.RFC3339)
 	data, err := s.c.Action(ctx, "Docflow", "CreateSimpleTask", params)
 	if err != nil {
 		return 0, err

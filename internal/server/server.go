@@ -323,7 +323,7 @@ func orDash(s string) string {
 
 type completeIn struct {
 	ID     int64  `json:"id" jsonschema:"Id задания"`
-	Result string `json:"result,omitempty" jsonschema:"результат для заданий с вариантами (например Complete, Accept, Reject); для простых заданий пусто"`
+	Result string `json:"result,omitempty" jsonschema:"результат: для простого задания Complete (по умолчанию), для приёмки Accepted (принять, по умолчанию) или ForRework (на доработку); можно по-русски: принять, на доработку, выполнено"`
 }
 
 type createTaskIn struct {
@@ -332,7 +332,7 @@ type createTaskIn struct {
 	PerformerIDs []int64 `json:"performer_ids" jsonschema:"Id исполнителей (rx_find_employees)"`
 	ObserverIDs  []int64 `json:"observer_ids,omitempty"`
 	DocumentIDs  []int64 `json:"document_ids,omitempty" jsonschema:"Id вложенных документов"`
-	Deadline     string  `json:"deadline,omitempty" jsonschema:"срок ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"`
+	Deadline     string  `json:"deadline" jsonschema:"срок, обязателен: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (дата без времени = 18:00)"`
 	Importance   string  `json:"importance,omitempty" jsonschema:"low, normal (по умолчанию), high"`
 	Notice       bool    `json:"notice,omitempty" jsonschema:"true = отправить как уведомление, без ожидания выполнения"`
 	Draft        bool    `json:"draft,omitempty" jsonschema:"true = создать черновиком, не стартовать"`
@@ -341,7 +341,7 @@ type createTaskIn struct {
 func (s *Server) registerWrite() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_complete_assignment",
-		Description: "Выполнить задание в Directum RX от имени пользователя. Для заданий с вариантами укажите result. Перед вызовом перескажите пользователю, что будет выполнено.",
+		Description: "Выполнить задание в Directum RX от имени пользователя: простое задание завершить, приёмку принять (result=Accepted) или вернуть на доработку (result=ForRework). Без result берётся стандартный вариант для типа задания. Перед вызовом перескажите пользователю, что будет сделано.",
 		Annotations: rw("Выполнить задание", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in completeIn) (*mcp.CallToolResult, any, error) {
 		a, _, err := s.svc.GetAssignment(ctx, in.ID)
@@ -351,18 +351,19 @@ func (s *Server) registerWrite() {
 		if a.Status != "InProcess" {
 			return fail(fmt.Errorf("задание #%d уже %s", a.ID, rx.Status(a.Status)))
 		}
-		msg := fmt.Sprintf("Выполнить задание #%d «%s»", a.ID, a.Subject)
+		msg := fmt.Sprintf("Завершить %s #%d «%s»", a.KindRu(), a.ID, a.Subject)
 		if in.Result != "" {
 			msg += " с результатом " + in.Result
 		}
 		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
 			return declined(err)
 		}
-		if err := s.svc.CompleteAssignment(ctx, in.ID, in.Result); err != nil {
+		res, err := s.svc.CompleteAssignment(ctx, a, in.Result)
+		if err != nil {
 			return fail(err)
 		}
-		s.log.Info("assignment completed", "id", in.ID)
-		return text(fmt.Sprintf("Задание #%d выполнено.", in.ID)), nil, nil
+		s.log.Info("assignment completed", "id", in.ID, "result", res)
+		return text(fmt.Sprintf("Задание #%d (%s) завершено с результатом %s.", in.ID, a.KindRu(), res)), nil, nil
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
@@ -371,13 +372,14 @@ func (s *Server) registerWrite() {
 		Annotations: rw("Создать задачу", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createTaskIn) (*mcp.CallToolResult, any, error) {
 		var dl *time.Time
-		if in.Deadline != "" {
-			t, err := parseDeadline(in.Deadline, s.svc.F.Loc)
-			if err != nil {
-				return fail(err)
-			}
-			dl = &t
+		if in.Deadline == "" {
+			return fail(errors.New("нужен срок (deadline): RX не создаёт задачу без срока; спросите у пользователя или предложите завтра"))
 		}
+		t, err := parseDeadline(in.Deadline, s.svc.F.Loc)
+		if err != nil {
+			return fail(err)
+		}
+		dl = &t
 		msg := fmt.Sprintf("Отправить задачу «%s» исполнителям %v", in.Subject, in.PerformerIDs)
 		if dl != nil {
 			msg += ", срок " + s.svc.F.DateTime(dl)

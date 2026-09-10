@@ -53,6 +53,7 @@ type TaskRef struct {
 
 // Assignment задание или уведомление.
 type Assignment struct {
+	Type        string       `json:"@odata.type"`
 	ID          int64        `json:"Id"`
 	Subject     string       `json:"Subject"`
 	Status      string       `json:"Status"`

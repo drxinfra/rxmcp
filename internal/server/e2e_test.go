@@ -28,9 +28,15 @@ func fakeRX(t *testing.T) *httptest.Server {
 		case "IAssignments":
 			json.NewEncoder(w).Encode(map[string]any{"@odata.count": 1, "value": []any{map[string]any{"Id": 5, "Subject": "Проверить", "Status": "InProcess", "Deadline": "2099-01-01T00:00:00Z", "Author": map[string]any{"Id": 1, "Name": "Автор"}}}})
 		case "Docflow/CompleteAssignment":
+			var m map[string]any
+			json.NewDecoder(r.Body).Decode(&m)
+			if m["result"] != "Complete" {
+				w.WriteHeader(400)
+				return
+			}
 			w.WriteHeader(204)
 		case "IAssignments(5)":
-			json.NewEncoder(w).Encode(map[string]any{"Id": 5, "Subject": "Проверить", "Status": "InProcess"})
+			json.NewEncoder(w).Encode(map[string]any{"@odata.type": "#X.Workflow.ISimpleAssignmentDto", "Id": 5, "Subject": "Проверить", "Status": "InProcess"})
 		default:
 			w.WriteHeader(404)
 		}
@@ -62,7 +68,7 @@ func TestToolsEndToEnd(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("complete: %v %+v", err, res)
 	}
-	if txt := res.Content[0].(*mcp.TextContent).Text; !strings.Contains(txt, "#5 выполнено") {
+	if txt := res.Content[0].(*mcp.TextContent).Text; !strings.Contains(txt, "#5 (простое задание) завершено с результатом Complete") {
 		t.Errorf("complete: %s", txt)
 	}
 	// Неверные аргументы отбиваются схемой.
