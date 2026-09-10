@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -431,29 +432,51 @@ func install() error {
 	}
 	exe, _ = filepath.Abs(exe)
 	env := map[string]string{
-		"RXMCP_URL":      "https://rx.company.ru/Integration",
-		"RXMCP_LOGIN":    "ivanov",
-		"RXMCP_PASSWORD": "***",
+		"RXMCP_URL":   "https://rx.company.ru/Integration",
+		"RXMCP_LOGIN": "ivanov",
 	}
-	for _, k := range []string{"RXMCP_URL", "RXMCP_LOGIN"} {
+	for _, k := range []string{"RXMCP_URL", "RXMCP_LOGIN", "RXMCP_TZ", "RXMCP_USER_ID"} {
 		if v := os.Getenv(k); v != "" {
 			env[k] = v
 		}
 	}
+	switch strings.ToLower(os.Getenv("RXMCP_AUTH")) {
+	case "cookie":
+		env["RXMCP_AUTH"] = "cookie"
+		env["RXMCP_COOKIE"] = "sungero_client=..."
+	case "oidc":
+		env["RXMCP_AUTH"] = "oidc"
+		for _, k := range []string{"RXMCP_OIDC_ISSUER", "RXMCP_OIDC_CLIENT_ID", "RXMCP_OIDC_FLOW"} {
+			if v := os.Getenv(k); v != "" {
+				env[k] = v
+			}
+		}
+	default:
+		env["RXMCP_PASSWORD"] = "***"
+	}
+	cfgPath := "~/Library/Application Support/Claude/claude_desktop_config.json"
+	if runtime.GOOS == "windows" {
+		cfgPath = `%APPDATA%\Claude\claude_desktop_config.json`
+	} else if runtime.GOOS == "linux" {
+		cfgPath = "~/.config/Claude/claude_desktop_config.json"
+	}
 	cfgJSON, _ := json.MarshalIndent(map[string]any{
 		"mcpServers": map[string]any{"rx": map[string]any{"command": exe, "env": env}},
 	}, "", "  ")
-	fmt.Printf(`Claude Desktop: файл claude_desktop_config.json (Settings → Developer → Edit Config), добавьте:
+	fmt.Printf(`Claude Desktop: файл %s (Settings → Developer → Edit Config).
+Если в файле уже есть блок "preferences", не трогайте его: добавьте "mcpServers" рядом.
 %s
 
 Claude Code:
-  claude mcp add rx -e RXMCP_URL=%s -e RXMCP_LOGIN=%s -e RXMCP_PASSWORD=*** -- %s
+  claude mcp add rx -e RXMCP_URL=%s -e RXMCP_LOGIN=%s -- %s
+  (остальные переменные из env выше добавьте через -e)
 
 Cursor: файл ~/.cursor/mcp.json, тот же JSON, что для Claude Desktop.
 
-Чтобы включить запись (выполнять задания, создавать задачи), добавьте в env "RXMCP_ALLOW_WRITE": "1".
-Проверить подключение: RXMCP_URL=… RXMCP_LOGIN=… RXMCP_PASSWORD=… %s check
-`, cfgJSON, env["RXMCP_URL"], env["RXMCP_LOGIN"], exe, exe)
+Запись (выполнять задания, отправлять задачи): добавьте в env "RXMCP_ALLOW_WRITE": "1".
+Вход через cookie браузера: RXMCP_AUTH=cookie %s install покажет вариант с RXMCP_COOKIE.
+Подробная инструкция с картинками: https://github.com/drxinfra/rxmcp/blob/main/docs/claude-desktop.md
+`, cfgPath, cfgJSON, env["RXMCP_URL"], env["RXMCP_LOGIN"], exe, exe)
 	return nil
 }
 
