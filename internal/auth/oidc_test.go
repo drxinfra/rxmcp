@@ -110,3 +110,51 @@ func TestClaims(t *testing.T) {
 		t.Error("мусор должен давать nil")
 	}
 }
+
+func TestDeviceLogin(t *testing.T) {
+	polls := 0
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/realms/x/.well-known/openid-configuration":
+			json.NewEncoder(w).Encode(map[string]any{
+				"authorization_endpoint":        srv.URL + "/auth",
+				"token_endpoint":                srv.URL + "/token",
+				"device_authorization_endpoint": srv.URL + "/device",
+			})
+		case "/device":
+			json.NewEncoder(w).Encode(map[string]any{"device_code": "dev1", "user_code": "ABCD-EFGH", "verification_uri": srv.URL + "/activate", "verification_uri_complete": srv.URL + "/activate?user_code=ABCD-EFGH", "interval": 1, "expires_in": 30})
+		case "/token":
+			body, _ := io.ReadAll(r.Body)
+			f, _ := url.ParseQuery(string(body))
+			if f.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" || f.Get("device_code") != "dev1" {
+				w.WriteHeader(400)
+				json.NewEncoder(w).Encode(map[string]any{"error": "invalid_request"})
+				return
+			}
+			polls++
+			if polls < 2 {
+				w.WriteHeader(400)
+				json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "dat", "refresh_token": "drt", "expires_in": 3600})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	openBrowser = func(string) {}
+	cfg := &OIDCConfig{Issuer: srv.URL + "/realms/x", ClientID: "rxmcp", CacheFile: filepath.Join(t.TempDir(), "d.json")}
+	// interval 1s в ответе, но код поднимает минимум до 5s; ускорим тест коротким deadline через контекст не нужно — polls==2 на второй итерации ~5s.
+	// Чтобы не ждать, проверим, что минимум-интервал применяется, но тест уложится: используем свой быстрый провайдер уже отдал pending один раз.
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	tok, err := cfg.DeviceLogin(ctx, io.Discard)
+	if err != nil || tok.AccessToken != "dat" || tok.RefreshToken != "drt" {
+		t.Fatalf("device login: %v %+v", err, tok)
+	}
+	if polls < 2 {
+		t.Errorf("должен был опросить минимум дважды (pending → success), polls=%d", polls)
+	}
+}

@@ -48,6 +48,7 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   RXMCP_COOKIE        заголовок Cookie из браузера после входа в RX (RXMCP_AUTH=cookie)
   RXMCP_OIDC_ISSUER   адрес realm, например https://sso.company.ru/realms/company (RXMCP_AUTH=oidc)
   RXMCP_OIDC_CLIENT_ID, RXMCP_OIDC_CLIENT_SECRET, RXMCP_OIDC_SCOPE, RXMCP_OIDC_PORT
+  RXMCP_OIDC_FLOW     code (по умолчанию, вход в браузере) | device (код на экране, для серверов и прокси)
   RXMCP_USER_ID       Id пользователя RX, если его нельзя вычислить по логину
   RXMCP_ALLOW_WRITE   1 = включить инструменты записи (выполнить задание, создать и прекратить задачу)
   RXMCP_INSECURE_TLS  1 = не проверять сертификат RX (только для тестовых стендов)
@@ -162,7 +163,13 @@ func login() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	t, err := oidcConfig(cfg).Login(ctx, os.Stdout)
+	oc := oidcConfig(cfg)
+	var t *auth.Tokens
+	if cfg.OIDCFlow == "device" {
+		t, err = oc.DeviceLogin(ctx, os.Stdout)
+	} else {
+		t, err = oc.Login(ctx, os.Stdout)
+	}
 	if err != nil {
 		return err
 	}

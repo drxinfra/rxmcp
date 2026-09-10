@@ -36,9 +36,10 @@ type OIDCConfig struct {
 }
 
 type discovery struct {
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	EndSessionEndpoint    string `json:"end_session_endpoint"`
+	AuthorizationEndpoint       string `json:"authorization_endpoint"`
+	TokenEndpoint               string `json:"token_endpoint"`
+	EndSessionEndpoint          string `json:"end_session_endpoint"`
+	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
 }
 
 // Tokens сохранённые токены.
@@ -217,6 +218,144 @@ func (c *OIDCConfig) Login(ctx context.Context, out io.Writer) (*Tokens, error) 
 		return nil, err
 	}
 	return t, nil
+}
+
+// DeviceLogin проходит device authorization grant (RFC 8628): показывает код и ссылку,
+// пользователь вводит их в браузере на любом устройстве, rxmcp опрашивает провайдера.
+// Не нужен ни свободный порт, ни redirect URI, поэтому годится за прокси и на серверах.
+func (c *OIDCConfig) DeviceLogin(ctx context.Context, out io.Writer) (*Tokens, error) {
+	if c.Issuer == "" || c.ClientID == "" {
+		return nil, errors.New("нужны RXMCP_OIDC_ISSUER и RXMCP_OIDC_CLIENT_ID")
+	}
+	d, err := c.discover(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if d.DeviceAuthorizationEndpoint == "" {
+		return nil, errors.New("провайдер не поддерживает device flow (нет device_authorization_endpoint); используйте вход по коду авторизации")
+	}
+	scope := c.Scope
+	if scope == "" {
+		scope = "openid profile offline_access"
+	}
+	form := url.Values{"client_id": {c.ClientID}, "scope": {scope}}
+	if c.ClientSecret != "" {
+		form.Set("client_secret", c.ClientSecret)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.DeviceAuthorizationEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("device endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var dr struct {
+		DeviceCode              string `json:"device_code"`
+		UserCode                string `json:"user_code"`
+		VerificationURI         string `json:"verification_uri"`
+		VerificationURIComplete string `json:"verification_uri_complete"`
+		ExpiresIn               int    `json:"expires_in"`
+		Interval                int    `json:"interval"`
+		Error                   string `json:"error"`
+		ErrorDesc               string `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &dr)
+	if resp.StatusCode != 200 || dr.DeviceCode == "" {
+		if dr.Error != "" {
+			return nil, fmt.Errorf("провайдер отклонил device-запрос: %s %s (обычно у клиента %q не включён OAuth Device Authorization Grant)", dr.Error, dr.ErrorDesc, c.ClientID)
+		}
+		return nil, fmt.Errorf("device endpoint вернул %d", resp.StatusCode)
+	}
+	uri := dr.VerificationURIComplete
+	if uri == "" {
+		uri = dr.VerificationURI
+	}
+	fmt.Fprintf(out, "Откройте на любом устройстве и введите код:\n  ссылка: %s\n  код:    %s\n\n", dr.VerificationURI, dr.UserCode)
+	if dr.VerificationURIComplete != "" {
+		fmt.Fprintf(out, "Или сразу перейдите по ссылке с кодом (откроется в браузере):\n%s\n\n", dr.VerificationURIComplete)
+	}
+	openBrowser(uri)
+
+	// Соблюдаем интервал, заданный провайдером (RFC 8628); по умолчанию 5 с.
+	interval := 5 * time.Second
+	if dr.Interval > 0 {
+		interval = time.Duration(dr.Interval) * time.Second
+	}
+	deadline := time.Now().Add(time.Duration(dr.ExpiresIn) * time.Second)
+	if dr.ExpiresIn == 0 {
+		deadline = time.Now().Add(10 * time.Minute)
+	}
+	fmt.Fprintln(out, "Жду подтверждения…")
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.New("код истёк, запустите вход заново")
+		}
+		poll := url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "device_code": {dr.DeviceCode}, "client_id": {c.ClientID}}
+		if c.ClientSecret != "" {
+			poll.Set("client_secret", c.ClientSecret)
+		}
+		t, perr, retry := c.pollToken(ctx, d.TokenEndpoint, poll)
+		if t != nil {
+			if err := c.save(t); err != nil {
+				return nil, err
+			}
+			return t, nil
+		}
+		switch retry {
+		case "slow_down":
+			interval += 5 * time.Second
+		case "authorization_pending":
+		default:
+			return nil, perr
+		}
+	}
+}
+
+// pollToken опрашивает токен в device flow; retry = "authorization_pending"|"slow_down" означает продолжать.
+func (c *OIDCConfig) pollToken(ctx context.Context, endpoint string, form url.Values) (*Tokens, error, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err, ""
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return nil, err, ""
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var tr struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &tr)
+	if tr.Error == "authorization_pending" || tr.Error == "slow_down" {
+		return nil, nil, tr.Error
+	}
+	if resp.StatusCode != 200 || tr.AccessToken == "" {
+		if tr.Error != "" {
+			return nil, fmt.Errorf("провайдер отказал: %s %s", tr.Error, tr.ErrorDesc), ""
+		}
+		return nil, fmt.Errorf("token endpoint вернул %d", resp.StatusCode), ""
+	}
+	exp := time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+	if tr.ExpiresIn == 0 {
+		exp = time.Now().Add(5 * time.Minute)
+	}
+	return &Tokens{Issuer: c.Issuer, ClientID: c.ClientID, AccessToken: tr.AccessToken, RefreshToken: tr.RefreshToken, IDToken: tr.IDToken, ExpiresAt: exp, Obtained: time.Now()}, nil, ""
 }
 
 func (c *OIDCConfig) exchange(ctx context.Context, endpoint string, form url.Values) (*Tokens, error) {

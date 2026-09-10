@@ -26,6 +26,7 @@ type Config struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCScope        string
+	OIDCFlow         string // code (по умолчанию) | device
 	OIDCPort         int
 	// Id пользователя RX, если его нельзя вычислить по логину (bearer).
 	UserID int64
