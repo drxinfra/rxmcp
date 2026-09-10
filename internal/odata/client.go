@@ -103,7 +103,7 @@ func New(o Options) (*Client, error) {
 		cookie:  o.Cookie,
 		tokenFn: o.TokenFunc,
 		http:    &http.Client{Transport: tr, Timeout: o.Timeout},
-		MaxBody: 8 << 20,
+		MaxBody: 64 << 20, // тела версий документов бывают большими (сканы, вложения)
 	}, nil
 }
 
