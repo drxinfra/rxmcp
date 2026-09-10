@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/drxinfra/rxmcp/internal/auth"
 	"github.com/drxinfra/rxmcp/internal/config"
 	"github.com/drxinfra/rxmcp/internal/odata"
 	"github.com/drxinfra/rxmcp/internal/rx"
@@ -32,7 +33,9 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   rxmcp                 запустить сервер по stdio (так его вызывает Claude Desktop, Cursor и др.)
   rxmcp serve --http    запустить по HTTP (Streamable HTTP) на RXMCP_HTTP_ADDR, нужен RXMCP_HTTP_SECRET
   rxmcp check           проверить подключение к RX только чтением и показать, что работает
+  rxmcp login           войти через OIDC (Keycloak и др.) в браузере и сохранить токены; logout удаляет их
   rxmcp query SET [$k=v …]   один GET к OData для отладки, например: rxmcp query IAssignments '$top=1'
+  rxmcp call Module/Action '{json}'   один POST действия для отладки (меняет данные, если действие пишущее)
   rxmcp install         напечатать фрагменты конфигурации для Claude Desktop, Claude Code, Cursor
   rxmcp version
 
@@ -40,8 +43,11 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   RXMCP_URL           адрес сервиса интеграции, например https://rx.company.ru/Integration
   RXMCP_LOGIN         логин пользователя RX (тип входа «пароль»)
   RXMCP_PASSWORD      пароль
-  RXMCP_AUTH          basic (по умолчанию) | header | bearer
+  RXMCP_AUTH          basic (по умолчанию) | header | bearer | cookie | oidc
   RXMCP_TOKEN         токен для RXMCP_AUTH=bearer
+  RXMCP_COOKIE        заголовок Cookie из браузера после входа в RX (RXMCP_AUTH=cookie)
+  RXMCP_OIDC_ISSUER   адрес realm, например https://sso.company.ru/realms/company (RXMCP_AUTH=oidc)
+  RXMCP_OIDC_CLIENT_ID, RXMCP_OIDC_CLIENT_SECRET, RXMCP_OIDC_SCOPE, RXMCP_OIDC_PORT
   RXMCP_USER_ID       Id пользователя RX, если его нельзя вычислить по логину
   RXMCP_ALLOW_WRITE   1 = включить инструменты записи (выполнить задание, создать и прекратить задачу)
   RXMCP_INSECURE_TLS  1 = не проверять сертификат RX (только для тестовых стендов)
@@ -79,6 +85,16 @@ func run(args []string) error {
 		return check()
 	case "query":
 		return query(args)
+	case "call":
+		return call(args)
+	case "login":
+		return login()
+	case "logout":
+		cfg, err := config.FromEnv()
+		if err != nil {
+			return err
+		}
+		return oidcConfig(cfg).Logout()
 	case "serve":
 		httpMode := false
 		for _, a := range args {
@@ -108,16 +124,106 @@ func build() (*config.Config, *rx.Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, err
 	}
-	cl, err := odata.New(odata.Options{
-		BaseURL: cfg.ODataURL(), Auth: cfg.Auth, Login: cfg.Login, Password: cfg.Password, Token: cfg.Token,
-		Timeout: cfg.Timeout, InsecureTLS: cfg.InsecureTLS, CAFile: cfg.CAFile,
-	})
+	cl, err := newClient(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	f := rx.Formatter{Loc: cfg.Location()}
 	svc := rx.New(cl, cfg.Login, cfg.UserID, cfg.PageSize, cfg.MaxPageSize, f)
 	return cfg, svc, nil
+}
+
+func oidcConfig(cfg *config.Config) *auth.OIDCConfig {
+	return &auth.OIDCConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Scope: cfg.OIDCScope, RedirectPort: cfg.OIDCPort}
+}
+
+func newClient(cfg *config.Config) (*odata.Client, error) {
+	o := odata.Options{
+		BaseURL: cfg.ODataURL(), Auth: cfg.Auth, Login: cfg.Login, Password: cfg.Password, Token: cfg.Token, Cookie: cfg.Cookie,
+		Timeout: cfg.Timeout, InsecureTLS: cfg.InsecureTLS, CAFile: cfg.CAFile,
+	}
+	if cfg.Auth == "oidc" {
+		src, err := auth.NewSource(oidcConfig(cfg))
+		if err != nil {
+			return nil, err
+		}
+		o.TokenFunc = src.Token
+	}
+	return odata.New(o)
+}
+
+func login() error {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if cfg.OIDCIssuer == "" || cfg.OIDCClientID == "" {
+		return errors.New("login: задайте RXMCP_OIDC_ISSUER и RXMCP_OIDC_CLIENT_ID (и RXMCP_AUTH=oidc для работы сервера)")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	t, err := oidcConfig(cfg).Login(ctx, os.Stdout)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Вход выполнен, токены сохранены в %s\n", auth.DefaultCacheFile(cfg.OIDCIssuer, cfg.OIDCClientID))
+	if cl := auth.Claims(t.AccessToken); cl != nil {
+		for _, k := range []string{"preferred_username", "name", "email", "aud", "azp"} {
+			if v, ok := cl[k]; ok {
+				fmt.Printf("  %s: %v\n", k, v)
+			}
+		}
+	}
+	fmt.Printf("Токен действует до %s", t.ExpiresAt.Format("15:04:05"))
+	if t.RefreshToken != "" {
+		fmt.Print(", обновляется автоматически")
+	}
+	fmt.Println(".")
+	if cfg.URL != "" {
+		fmt.Println("Проверка доступа к RX: RXMCP_AUTH=oidc rxmcp check")
+	}
+	return nil
+}
+
+// call делает один POST действия модуля. Только для отладки.
+func call(args []string) error {
+	if len(args) < 1 {
+		return errors.New("rxmcp call Module/Action ['{\"param\":1}']")
+	}
+	cfg, _, err := build()
+	if err != nil {
+		return err
+	}
+	cl, err := newClient(cfg)
+	if err != nil {
+		return err
+	}
+	module, action, ok := strings.Cut(args[0], "/")
+	if !ok {
+		return errors.New("формат: Module/Action, например Docflow/CompleteAssignment")
+	}
+	params := map[string]any{}
+	if len(args) > 1 {
+		if err := json.Unmarshal([]byte(args[1]), &params); err != nil {
+			return fmt.Errorf("параметры не JSON: %w", err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
+	data, err := cl.Action(ctx, module, action, params)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%d байт\n", len(data))
+	limit := 2000
+	if v := os.Getenv("RXMCP_QUERY_LIMIT"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	if len(data) > limit {
+		data = data[:limit]
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 func serve(httpMode bool) error {
@@ -172,10 +278,10 @@ func check() error {
 	if err != nil {
 		return err
 	}
-	cl, _ := odata.New(odata.Options{
-		BaseURL: cfg.ODataURL(), Auth: cfg.Auth, Login: cfg.Login, Password: cfg.Password, Token: cfg.Token,
-		Timeout: cfg.Timeout, InsecureTLS: cfg.InsecureTLS, CAFile: cfg.CAFile,
-	})
+	cl, err := newClient(cfg)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	fmt.Printf("rxmcp %s · проверка подключения к %s (auth=%s)\n\n", version, cfg.ODataURL(), cfg.Auth)
@@ -353,10 +459,7 @@ func query(args []string) error {
 	if err != nil {
 		return err
 	}
-	cl, err := odata.New(odata.Options{
-		BaseURL: cfg.ODataURL(), Auth: cfg.Auth, Login: cfg.Login, Password: cfg.Password, Token: cfg.Token,
-		Timeout: cfg.Timeout, InsecureTLS: cfg.InsecureTLS, CAFile: cfg.CAFile,
-	})
+	cl, err := newClient(cfg)
 	if err != nil {
 		return err
 	}

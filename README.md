@@ -15,6 +15,9 @@ MCP-сервер для Directum RX. Подключает ИИ-ассистен�
 - `rx_find_documents`, `rx_get_document`: поиск и карточка документа.
 - `rx_get_document_text`: текст версии (docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf).
 - `rx_find_employees`: найти сотрудника, чтобы адресовать задачу.
+- База знаний: `rx_kb_areas`, `rx_kb_search`, `rx_kb_article` (текст статьи в markdown).
+- Agile-доски: `rx_boards`, `rx_board` (колонки и карточки), `rx_tickets`, `rx_ticket`.
+- Проекты: `rx_projects`, `rx_project` (команда, гейты, планы), `rx_project_plans`, `rx_project_plan` (дерево работ, ответственные, просрочки).
 
 Запись (только с `RXMCP_ALLOW_WRITE=1`, иначе инструменты не видны модели):
 
@@ -72,8 +75,10 @@ claude mcp add rx -e RXMCP_URL=https://rx.company.ru/Integration -e RXMCP_LOGIN=
 |---|---|
 | `RXMCP_URL` | адрес сервиса интеграции, обычно `https://rx.company.ru/Integration` |
 | `RXMCP_LOGIN`, `RXMCP_PASSWORD` | учётка RX с типом входа «пароль» |
-| `RXMCP_AUTH` | `basic` (по умолчанию), `header` (заголовки Username/Password для старых версий), `bearer` |
+| `RXMCP_AUTH` | `basic` (по умолчанию), `header`, `oidc`, `bearer`, `cookie` |
+| `RXMCP_OIDC_ISSUER`, `RXMCP_OIDC_CLIENT_ID` | провайдер и клиент для `oidc`, см. ниже |
 | `RXMCP_TOKEN` | токен для `bearer` |
+| `RXMCP_COOKIE` | заголовок Cookie из браузера для `cookie` |
 | `RXMCP_USER_ID` | Id пользователя RX, если по логину его не найти |
 | `RXMCP_ALLOW_WRITE` | `1` включает инструменты записи |
 | `RXMCP_INSECURE_TLS` | `1` не проверять сертификат (тестовые стенды) |
@@ -85,7 +90,23 @@ claude mcp add rx -e RXMCP_URL=https://rx.company.ru/Integration -e RXMCP_LOGIN=
 
 ## Про вход в RX
 
-Сервис интеграции RX проверяет только логин с паролем. Если у вас вход по Windows-учётке, через SAML или OIDC, попросите администратора завести вам дополнительный логин типа «пароль» либо отдельную учётку для интеграции с нужными правами. Kerberos/NTLM в rxmcp пока нет.
+**Логин и пароль** (`basic`): подходит, если у вашей учётки в RX есть вход по паролю.
+
+**Keycloak и другой OIDC** (`oidc`): пароль вводится в браузере, rxmcp пароль не видит. Администратор Keycloak заводит публичный клиент `rxmcp` (Standard flow, PKCE S256, Valid redirect URIs `http://127.0.0.1:*/callback`), дальше:
+
+```sh
+export RXMCP_URL=https://rx.company.ru/Integration
+export RXMCP_AUTH=oidc RXMCP_OIDC_ISSUER=https://sso.company.ru/realms/company RXMCP_OIDC_CLIENT_ID=rxmcp
+export RXMCP_LOGIN=ivanov   # логин в RX, чтобы найти вашу учётку в справочнике
+./rxmcp login                # откроется браузер
+./rxmcp check
+```
+
+Токены лежат в конфиге пользователя с правами 0600 и обновляются сами. Те же переменные добавьте в env MCP-сервера в конфиге хоста.
+
+**Cookie из браузера** (`cookie`): временный путь, если OIDC-клиента ещё нет. Войдите в RX в браузере, скопируйте из инструментов разработчика значение заголовка Cookie для запроса к `/Integration/odata/` и передайте его в `RXMCP_COOKIE`. Работает, пока жива сессия.
+
+**Домен Windows** (`negotiate`): в планах, см. дорожную карту в docs/architecture.md.
 
 ## Безопасность
 

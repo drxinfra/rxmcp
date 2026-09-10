@@ -53,6 +53,7 @@ func New(svc *rx.Service, opt Options) *Server {
 		Logger:       opt.Logger,
 	})
 	s.registerRead()
+	s.registerModules()
 	if opt.AllowWrite {
 		s.registerWrite()
 	}

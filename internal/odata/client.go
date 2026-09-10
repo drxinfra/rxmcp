@@ -26,17 +26,22 @@ type Client struct {
 	login   string
 	pass    string
 	token   string
+	cookie  string
+	tokenFn func(context.Context) (string, error)
 	http    *http.Client
 	MaxBody int64
 }
 
 // Options параметры создания клиента.
 type Options struct {
-	BaseURL     string
-	Auth        string
-	Login       string
-	Password    string
-	Token       string
+	BaseURL  string
+	Auth     string
+	Login    string
+	Password string
+	Token    string
+	Cookie   string
+	// TokenFunc выдаёт актуальный bearer-токен (OIDC с обновлением). Имеет приоритет над Token.
+	TokenFunc   func(context.Context) (string, error)
 	Timeout     time.Duration
 	InsecureTLS bool
 	CAFile      string
@@ -53,7 +58,7 @@ type Error struct {
 func (e *Error) Error() string {
 	switch e.Status {
 	case 401:
-		return "RX отклонил учётку (401): проверьте логин и пароль, у логина должен быть тип «пароль»"
+		return "RX отклонил учётку (401): для basic проверьте логин и пароль (у логина должен быть тип «пароль»), для oidc/cookie сессия могла истечь: rxmcp login или новая cookie"
 	case 403:
 		return "нет прав (403): у этой учётки нет доступа к объекту или к сервису интеграции"
 	case 404:
@@ -95,6 +100,8 @@ func New(o Options) (*Client, error) {
 		login:   o.Login,
 		pass:    o.Password,
 		token:   o.Token,
+		cookie:  o.Cookie,
+		tokenFn: o.TokenFunc,
 		http:    &http.Client{Transport: tr, Timeout: o.Timeout},
 		MaxBody: 8 << 20,
 	}, nil
@@ -103,16 +110,27 @@ func New(o Options) (*Client, error) {
 // Base возвращает корень OData.
 func (c *Client) Base() string { return c.base }
 
-func (c *Client) setAuth(r *http.Request) {
+func (c *Client) setAuth(r *http.Request) error {
 	switch c.auth {
 	case "header":
 		r.Header.Set("Username", c.login)
 		r.Header.Set("Password", c.pass)
-	case "bearer":
-		r.Header.Set("Authorization", "Bearer "+c.token)
+	case "bearer", "oidc":
+		tok := c.token
+		if c.tokenFn != nil {
+			t, err := c.tokenFn(r.Context())
+			if err != nil {
+				return err
+			}
+			tok = t
+		}
+		r.Header.Set("Authorization", "Bearer "+tok)
+	case "cookie":
+		r.Header.Set("Cookie", c.cookie)
 	default:
 		r.SetBasicAuth(c.login, c.pass)
 	}
+	return nil
 }
 
 // Query параметры OData-запроса.
@@ -198,7 +216,9 @@ func (c *Client) Raw(ctx context.Context, path string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	c.setAuth(req)
+	if err := c.setAuth(req); err != nil {
+		return nil, "", err
+	}
 	req.Header.Set("Accept", "*/*")
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -231,7 +251,9 @@ func (c *Client) Action(ctx context.Context, module, action string, params map[s
 	if err != nil {
 		return nil, err
 	}
-	c.setAuth(req)
+	if err := c.setAuth(req); err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
@@ -256,7 +278,9 @@ func (c *Client) get(ctx context.Context, path string, v url.Values) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	c.setAuth(req)
+	if err := c.setAuth(req); err != nil {
+		return nil, err
+	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {

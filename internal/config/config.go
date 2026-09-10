@@ -20,6 +20,13 @@ type Config struct {
 	Login    string
 	Password string
 	Token    string
+	Cookie   string
+	// OIDC: провайдер и клиент.
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCScope        string
+	OIDCPort         int
 	// Id пользователя RX, если его нельзя вычислить по логину (bearer).
 	UserID int64
 	// Разрешить инструменты записи.
@@ -44,21 +51,26 @@ type Config struct {
 // FromEnv собирает конфигурацию из окружения. Ошибки только по обязательным полям.
 func FromEnv() (*Config, error) {
 	c := &Config{
-		URL:          strings.TrimRight(os.Getenv("RXMCP_URL"), "/"),
-		Auth:         strings.ToLower(strings.TrimSpace(env("RXMCP_AUTH", "basic"))),
-		Login:        os.Getenv("RXMCP_LOGIN"),
-		Password:     os.Getenv("RXMCP_PASSWORD"),
-		Token:        os.Getenv("RXMCP_TOKEN"),
-		AllowWrite:   isTrue(os.Getenv("RXMCP_ALLOW_WRITE")),
-		InsecureTLS:  isTrue(os.Getenv("RXMCP_INSECURE_TLS")),
-		CAFile:       os.Getenv("RXMCP_CA"),
-		Timeout:      30 * time.Second,
-		PageSize:     20,
-		MaxPageSize:  100,
-		MaxTextChars: 20000,
-		TimeZone:     os.Getenv("RXMCP_TZ"),
-		HTTPAddr:     os.Getenv("RXMCP_HTTP_ADDR"),
-		HTTPSecret:   os.Getenv("RXMCP_HTTP_SECRET"),
+		URL:              strings.TrimRight(os.Getenv("RXMCP_URL"), "/"),
+		Auth:             strings.ToLower(strings.TrimSpace(env("RXMCP_AUTH", "basic"))),
+		Login:            os.Getenv("RXMCP_LOGIN"),
+		Password:         os.Getenv("RXMCP_PASSWORD"),
+		Token:            os.Getenv("RXMCP_TOKEN"),
+		Cookie:           os.Getenv("RXMCP_COOKIE"),
+		OIDCIssuer:       strings.TrimRight(os.Getenv("RXMCP_OIDC_ISSUER"), "/"),
+		OIDCClientID:     os.Getenv("RXMCP_OIDC_CLIENT_ID"),
+		OIDCClientSecret: os.Getenv("RXMCP_OIDC_CLIENT_SECRET"),
+		OIDCScope:        os.Getenv("RXMCP_OIDC_SCOPE"),
+		AllowWrite:       isTrue(os.Getenv("RXMCP_ALLOW_WRITE")),
+		InsecureTLS:      isTrue(os.Getenv("RXMCP_INSECURE_TLS")),
+		CAFile:           os.Getenv("RXMCP_CA"),
+		Timeout:          30 * time.Second,
+		PageSize:         20,
+		MaxPageSize:      100,
+		MaxTextChars:     20000,
+		TimeZone:         os.Getenv("RXMCP_TZ"),
+		HTTPAddr:         os.Getenv("RXMCP_HTTP_ADDR"),
+		HTTPSecret:       os.Getenv("RXMCP_HTTP_SECRET"),
 	}
 	if v := os.Getenv("RXMCP_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -66,6 +78,13 @@ func FromEnv() (*Config, error) {
 			return nil, fmt.Errorf("RXMCP_TIMEOUT: %w", err)
 		}
 		c.Timeout = d
+	}
+	if v := os.Getenv("RXMCP_OIDC_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("RXMCP_OIDC_PORT: %w", err)
+		}
+		c.OIDCPort = n
 	}
 	if v := os.Getenv("RXMCP_USER_ID"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -101,8 +120,19 @@ func (c *Config) Validate() error {
 		if c.Token == "" {
 			return errors.New("RXMCP_AUTH=bearer требует RXMCP_TOKEN")
 		}
+	case "cookie":
+		if c.Cookie == "" {
+			return errors.New("RXMCP_AUTH=cookie требует RXMCP_COOKIE (значение заголовка Cookie из браузера после входа в RX)")
+		}
+	case "oidc":
+		if c.OIDCIssuer == "" || c.OIDCClientID == "" {
+			return errors.New("RXMCP_AUTH=oidc требует RXMCP_OIDC_ISSUER и RXMCP_OIDC_CLIENT_ID")
+		}
 	default:
-		return fmt.Errorf("RXMCP_AUTH=%q: допустимо basic, header, bearer", c.Auth)
+		return fmt.Errorf("RXMCP_AUTH=%q: допустимо basic, header, bearer, cookie, oidc", c.Auth)
+	}
+	if (c.Auth == "cookie" || c.Auth == "oidc" || c.Auth == "bearer") && c.Login == "" && c.UserID == 0 {
+		return fmt.Errorf("при RXMCP_AUTH=%s задайте RXMCP_LOGIN (логин в RX, чтобы найти пользователя) или RXMCP_USER_ID", c.Auth)
 	}
 	if c.HTTPAddr != "" && c.HTTPSecret == "" {
 		return errors.New("HTTP-режим требует RXMCP_HTTP_SECRET")
