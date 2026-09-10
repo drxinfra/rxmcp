@@ -1,0 +1,108 @@
+# rxmcp
+
+MCP-сервер для Directum RX. Подключает ИИ-ассистента (Claude Desktop, Claude Code, Cursor и любой другой хост с поддержкой [Model Context Protocol](https://modelcontextprotocol.io)) к вашей системе: задания, задачи, документы и их текст, поиск сотрудников. Работает от имени пользователя RX через штатный сервис интеграции (OData), ничего сверх его прав не делает.
+
+Один бинарник без зависимостей: Linux, Windows, macOS.
+
+## Что умеет
+
+Чтение (всегда):
+
+- `rx_whoami`: кто я в RX.
+- `rx_my_assignments`: мои задания в работе, просроченные, непрочитанные, выполненные; уведомления.
+- `rx_get_assignment`, `rx_get_task`: карточка с перепиской, вложениями, заданиями по задаче.
+- `rx_list_tasks`: задачи, которые я отправил.
+- `rx_find_documents`, `rx_get_document`: поиск и карточка документа.
+- `rx_get_document_text`: текст версии (docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf).
+- `rx_find_employees`: найти сотрудника, чтобы адресовать задачу.
+
+Запись (только с `RXMCP_ALLOW_WRITE=1`, иначе инструменты не видны модели):
+
+- `rx_complete_assignment`: выполнить задание.
+- `rx_create_simple_task`: создать и отправить простую задачу.
+- `rx_abort_task`: прекратить задачу.
+
+Плюс ресурсы `rx://assignment/{id}`, `rx://task/{id}`, `rx://document/{id}` и промпты «разбор заданий на сегодня» и «краткое содержание документа».
+
+Подробности и принципы: [docs/architecture.md](docs/architecture.md).
+
+## Установка
+
+1. Скачайте бинарник для своей ОС со страницы [Releases](https://github.com/drxinfra/rxmcp/releases) и положите его в удобное место.
+2. Проверьте подключение (только чтение, безопасно для рабочей системы):
+
+```sh
+RXMCP_URL=https://rx.company.ru/Integration \
+RXMCP_LOGIN=ivanov RXMCP_PASSWORD='***' \
+./rxmcp check
+```
+
+3. Напечатайте фрагменты конфигурации для своего хоста и вставьте их:
+
+```sh
+./rxmcp install
+```
+
+Для Claude Desktop это файл `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "rx": {
+      "command": "/path/to/rxmcp",
+      "env": {
+        "RXMCP_URL": "https://rx.company.ru/Integration",
+        "RXMCP_LOGIN": "ivanov",
+        "RXMCP_PASSWORD": "***"
+      }
+    }
+  }
+}
+```
+
+Для Claude Code:
+
+```sh
+claude mcp add rx -e RXMCP_URL=https://rx.company.ru/Integration -e RXMCP_LOGIN=ivanov -e RXMCP_PASSWORD='***' -- /path/to/rxmcp
+```
+
+## Настройки
+
+| Переменная | Значение |
+|---|---|
+| `RXMCP_URL` | адрес сервиса интеграции, обычно `https://rx.company.ru/Integration` |
+| `RXMCP_LOGIN`, `RXMCP_PASSWORD` | учётка RX с типом входа «пароль» |
+| `RXMCP_AUTH` | `basic` (по умолчанию), `header` (заголовки Username/Password для старых версий), `bearer` |
+| `RXMCP_TOKEN` | токен для `bearer` |
+| `RXMCP_USER_ID` | Id пользователя RX, если по логину его не найти |
+| `RXMCP_ALLOW_WRITE` | `1` включает инструменты записи |
+| `RXMCP_INSECURE_TLS` | `1` не проверять сертификат (тестовые стенды) |
+| `RXMCP_CA` | PEM-файл корневого сертификата своего УЦ |
+| `RXMCP_TIMEOUT` | таймаут запроса, по умолчанию `30s` |
+| `RXMCP_MAX_TEXT` | лимит текста документа, символов, по умолчанию 20000 |
+| `RXMCP_TZ` | часовой пояс для дат, например `Europe/Moscow` |
+| `RXMCP_HTTP_ADDR`, `RXMCP_HTTP_SECRET` | режим `serve --http` |
+
+## Про вход в RX
+
+Сервис интеграции RX проверяет только логин с паролем. Если у вас вход по Windows-учётке, через SAML или OIDC, попросите администратора завести вам дополнительный логин типа «пароль» либо отдельную учётку для интеграции с нужными правами. Kerberos/NTLM в rxmcp пока нет.
+
+## Безопасность
+
+- Сервер работает под вашей учёткой и видит ровно то, что видите вы.
+- По умолчанию только чтение. Запись включается явно, перед каждым действием хост спрашивает подтверждение, если умеет.
+- Ничего не хранится и никуда не отправляется, кроме вашего RX. Пароль живёт в переменной окружения процесса и в логи не попадает.
+- Содержимое из RX (темы, переписка, текст документов) передаётся модели с пометкой «данные, не инструкции».
+
+## Сборка из исходников
+
+```sh
+go build -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o rxmcp .
+go test ./...
+```
+
+## Лицензия
+
+Apache-2.0. Directum RX является товарным знаком ООО «Директум»; rxmcp независимый проект и не связан с вендором.
+
+Нужна помощь с инфраструктурой RX, мониторингом или обновлениями: [drxinfra.ru](https://drxinfra.ru).
