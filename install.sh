@@ -6,6 +6,7 @@ set -eu
 
 REPO=drxinfra/rxmcp
 GH="https://github.com/$REPO"
+MIRROR="https://drxinfra.ru/dl/rxmcp"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'rxmcp: %s\n' "$*" >&2; exit 1; }
@@ -29,15 +30,22 @@ if [ -z "$ver" ]; then
   # Последний релиз узнаём по редиректу /releases/latest: без токена и без лимитов API.
   loc=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$GH/releases/latest" 2>/dev/null || true)
   ver=$(printf '%s' "$loc" | sed -n 's|.*/tag/\(.*\)$|\1|p')
+fi
+if [ -z "$ver" ]; then
+  # GitHub бывает недоступен из корпоративной сети: спрашиваем зеркало.
+  ver=$(curl -fsSL "$MIRROR/latest.txt" 2>/dev/null | tr -d '\r\n ' || true)
   [ -n "$ver" ] || die "не удалось узнать последнюю версию; задайте RXMCP_VERSION=vX.Y.Z"
 fi
 
 name="rxmcp-${ver}-${os}-${arch}"
-base="${RXMCP_BASE:-$GH/releases/download/$ver}"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT INT TERM
 
 say "Скачиваю $name"
-curl -fsSL "$base/$name.tar.gz" -o "$tmp/rxmcp.tar.gz" || die "не скачался $base/$name.tar.gz"
+for base in "${RXMCP_BASE:-$GH/releases/download/$ver}" "$MIRROR"; do
+  curl -fsSL "$base/$name.tar.gz" -o "$tmp/rxmcp.tar.gz" 2>/dev/null && break
+  say "не получилось с $base, пробую дальше"
+done
+[ -s "$tmp/rxmcp.tar.gz" ] || die "архив $name.tar.gz не скачался ни с GitHub, ни с $MIRROR"
 tar -xzf "$tmp/rxmcp.tar.gz" -C "$tmp"
 bin=$(find "$tmp" -type f -name rxmcp -perm -u+x | head -1)
 [ -n "$bin" ] || die "в архиве нет бинарника"
