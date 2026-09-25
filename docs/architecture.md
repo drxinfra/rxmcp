@@ -111,10 +111,10 @@ MCP-сервер для Directum RX. Даёт ИИ-ассистенту (Claude 
 
 ```
 main.go                 команды: serve (по умолчанию), setup, check, login/logout, config, install, query, call, version
-internal/auth           OIDC: PKCE, локальный колбэк, кэш токенов, обновление
+internal/auth           каталог настроек, хранилище cookie, OIDC: PKCE, device flow, кэш токенов
 internal/config         профиль (~/.config/rxmcp/config.json) и переменные окружения; окружение приоритетнее
 internal/odata          HTTP-клиент OData: GET/POST, аутентификация, ошибки, лимиты
-internal/rx             доменные запросы и форматирование: задания, задачи, документы, люди
+internal/rx             доменные запросы и форматирование: задания, задачи, документы, люди, доски
 internal/textx          извлечение текста из docx/xlsx/txt/…
 internal/server         регистрация инструментов, ресурсов, промптов в MCP
 ```
