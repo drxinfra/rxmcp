@@ -21,15 +21,16 @@ import (
 
 // Client держит HTTP-клиент и способ аутентификации.
 type Client struct {
-	base    string
-	auth    string
-	login   string
-	pass    string
-	token   string
-	cookie  string
-	tokenFn func(context.Context) (string, error)
-	http    *http.Client
-	MaxBody int64
+	base     string
+	auth     string
+	login    string
+	pass     string
+	token    string
+	cookie   string
+	cookieFn func() (string, error)
+	tokenFn  func(context.Context) (string, error)
+	http     *http.Client
+	MaxBody  int64
 }
 
 // Options параметры создания клиента.
@@ -40,6 +41,9 @@ type Options struct {
 	Password string
 	Token    string
 	Cookie   string
+	// CookieFunc отдаёт актуальную куку. Читается на каждом запросе, поэтому
+	// обновление куки не требует перезапуска клиента. Имеет приоритет над Cookie.
+	CookieFunc func() (string, error)
 	// TokenFunc выдаёт актуальный bearer-токен (OIDC с обновлением). Имеет приоритет над Token.
 	TokenFunc   func(context.Context) (string, error)
 	Timeout     time.Duration
@@ -58,7 +62,7 @@ type Error struct {
 func (e *Error) Error() string {
 	switch e.Status {
 	case 401:
-		return "RX отклонил учётку (401): для basic проверьте логин и пароль (у логина должен быть тип «пароль»), для oidc/cookie сессия могла истечь: rxmcp login или новая cookie"
+		return "RX отклонил учётку (401). Для basic проверьте логин и пароль (у логина должен быть тип «пароль»). Для cookie сессия истекла: войдите в RX в браузере и выполните `rxmcp login --paste`, перезапускать Claude не нужно. Для oidc: `rxmcp login`"
 	case 403:
 		return "нет прав (403): у этой учётки нет доступа к объекту или к сервису интеграции"
 	case 404:
@@ -98,15 +102,16 @@ func New(o Options) (*Client, error) {
 		o.Timeout = 30 * time.Second
 	}
 	return &Client{
-		base:    strings.TrimRight(o.BaseURL, "/"),
-		auth:    o.Auth,
-		login:   o.Login,
-		pass:    o.Password,
-		token:   o.Token,
-		cookie:  o.Cookie,
-		tokenFn: o.TokenFunc,
-		http:    &http.Client{Transport: tr, Timeout: o.Timeout},
-		MaxBody: 64 << 20, // тела версий документов бывают большими (сканы, вложения)
+		base:     strings.TrimRight(o.BaseURL, "/"),
+		auth:     o.Auth,
+		login:    o.Login,
+		pass:     o.Password,
+		token:    o.Token,
+		cookie:   o.Cookie,
+		cookieFn: o.CookieFunc,
+		tokenFn:  o.TokenFunc,
+		http:     &http.Client{Transport: tr, Timeout: o.Timeout},
+		MaxBody:  64 << 20, // тела версий документов бывают большими (сканы, вложения)
 	}, nil
 }
 
@@ -129,7 +134,15 @@ func (c *Client) setAuth(r *http.Request) error {
 		}
 		r.Header.Set("Authorization", "Bearer "+tok)
 	case "cookie":
-		r.Header.Set("Cookie", c.cookie)
+		ck := c.cookie
+		if c.cookieFn != nil {
+			v, err := c.cookieFn()
+			if err != nil {
+				return fmt.Errorf("нет сохранённой куки: %w", err)
+			}
+			ck = v
+		}
+		r.Header.Set("Cookie", ck)
 	default:
 		r.SetBasicAuth(c.login, c.pass)
 	}

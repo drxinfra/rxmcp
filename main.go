@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -30,35 +30,45 @@ var version = "dev"
 
 const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
 
-Команды:
-  rxmcp                 запустить сервер по stdio (так его вызывает Claude Desktop, Cursor и др.)
+Начало работы:
+  rxmcp setup           спросит адрес RX, логин и способ входа, проверит связь
+                        и сам прописывает сервер в Claude Code, Claude Desktop, Cursor
+  rxmcp login           обновить вход (кука из браузера или вход через провайдера)
+  rxmcp login --paste   то же, но куку берёт из буфера обмена
+  rxmcp check           проверить подключение к RX одним чтением и показать, что работает
+
+Остальные команды:
+  rxmcp                 запустить сервер по stdio (так его вызывает MCP-клиент)
   rxmcp serve --http    запустить по HTTP (Streamable HTTP) на RXMCP_HTTP_ADDR, нужен RXMCP_HTTP_SECRET
-  rxmcp check           проверить подключение к RX только чтением и показать, что работает
-  rxmcp login           войти через OIDC (Keycloak и др.) в браузере и сохранить токены; logout удаляет их
+  rxmcp config          показать профиль; config set КЛЮЧ=значение, config unset КЛЮЧ, config path
+  rxmcp logout          удалить сохранённые куку и токены
+  rxmcp install         напечатать фрагменты конфигурации для клиентов; --apply прописать сразу
   rxmcp query SET [$k=v …]   один GET к OData для отладки, например: rxmcp query IAssignments '$top=1'
   rxmcp call Module/Action '{json}'   один POST действия для отладки (меняет данные, если действие пишущее)
-  rxmcp install         напечатать фрагменты конфигурации для Claude Desktop, Claude Code, Cursor
   rxmcp version
 
-Переменные окружения:
+Настройки лежат в профиле (rxmcp config path), права 0600. Переменные окружения
+имеют приоритет над профилем — так удобно в контейнере и в CI. Имена одинаковые:
+
   RXMCP_URL           адрес сервиса интеграции, например https://rx.company.ru/Integration
-  RXMCP_LOGIN         логин пользователя RX (тип входа «пароль»)
-  RXMCP_PASSWORD      пароль
-  RXMCP_AUTH          basic (по умолчанию) | header | bearer | cookie | oidc
+  RXMCP_AUTH          basic (логин и пароль) | cookie | oidc | bearer | header
+  RXMCP_LOGIN         логин пользователя RX (нужен всегда: по нему ищутся ваши задания)
+  RXMCP_PASSWORD      пароль (RXMCP_AUTH=basic)
+  RXMCP_COOKIE        заголовок Cookie из браузера; обычно не нужен, куку держит rxmcp login
   RXMCP_TOKEN         токен для RXMCP_AUTH=bearer
-  RXMCP_COOKIE        заголовок Cookie из браузера после входа в RX (RXMCP_AUTH=cookie)
   RXMCP_OIDC_ISSUER   адрес realm, например https://sso.company.ru/realms/company (RXMCP_AUTH=oidc)
   RXMCP_OIDC_CLIENT_ID, RXMCP_OIDC_CLIENT_SECRET, RXMCP_OIDC_SCOPE, RXMCP_OIDC_PORT
-  RXMCP_OIDC_FLOW     code (по умолчанию, вход в браузере) | device (код на экране, для серверов и прокси)
+  RXMCP_OIDC_FLOW     code (по умолчанию, вход в браузере) | device (код на экране, для серверов)
   RXMCP_USER_ID       Id пользователя RX, если его нельзя вычислить по логину
-  RXMCP_ALLOW_WRITE   1 = включить инструменты записи (выполнить задание, создать и прекратить задачу)
+  RXMCP_ALLOW_WRITE   1 = включить инструменты записи (карточки, задачи, выполнение заданий)
   RXMCP_INSECURE_TLS  1 = не проверять сертификат RX (только для тестовых стендов)
   RXMCP_CA            файл PEM с корневым сертификатом вашего УЦ
   RXMCP_TIMEOUT       таймаут запроса к RX, по умолчанию 30s
   RXMCP_MAX_TEXT      лимит текста документа в символах, по умолчанию 20000
   RXMCP_TZ            часовой пояс для дат, например Europe/Moscow (по умолчанию системный)
+  RXMCP_HOME          каталог настроек, по умолчанию ~/.config/rxmcp
   RXMCP_HTTP_ADDR     адрес для serve --http, например 127.0.0.1:8765
-  RXMCP_HTTP_SECRET   общий секрет для HTTP-режима, клиент шлёт заголовок Authorization: Bearer <секрет>
+  RXMCP_HTTP_SECRET   общий секрет для HTTP-режима, клиент шлёт Authorization: Bearer <секрет>
 `
 
 func main() {
@@ -81,7 +91,18 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Printf(usage, version)
 		return nil
+	case "setup":
+		return setup(args)
+	case "config":
+		return configCmd(args)
 	case "install":
+		for _, a := range args {
+			if a == "--apply" {
+				// Прописать в клиенты, ничего не спрашивая: удобно, когда профиль уже есть.
+				return registerClients("rx", true, nil)
+			}
+			return fmt.Errorf("install: неизвестный аргумент %q (есть --apply)", a)
+		}
 		return install()
 	case "check":
 		return check()
@@ -90,13 +111,37 @@ func run(args []string) error {
 	case "call":
 		return call(args)
 	case "login":
-		return login()
+		paste, cookieFlag := false, false
+		for _, a := range args {
+			switch a {
+			case "--cookie":
+				cookieFlag = true
+			case "--paste":
+				paste = true
+			default:
+				return fmt.Errorf("login: неизвестный аргумент %q (есть --paste)", a)
+			}
+		}
+		if !cookieFlag && !paste {
+			// Без флагов делаем то, что настроено: спорить с человеком не о чем.
+			if cfg, err := config.FromEnv(); err == nil && cfg.Auth == "oidc" {
+				return login()
+			}
+		}
+		return loginCookie(paste)
 	case "logout":
 		cfg, err := config.FromEnv()
 		if err != nil {
 			return err
 		}
-		return oidcConfig(cfg).Logout()
+		if err := auth.ForgetCookie(cfg.URL); err != nil {
+			return err
+		}
+		if cfg.OIDCIssuer != "" {
+			return oidcConfig(cfg).Logout()
+		}
+		fmt.Println("Кука удалена. Вернуть: rxmcp login")
+		return nil
 	case "serve":
 		httpMode := false
 		for _, a := range args {
@@ -144,6 +189,12 @@ func newClient(cfg *config.Config) (*odata.Client, error) {
 		BaseURL: cfg.ODataURL(), Auth: cfg.Auth, Login: cfg.Login, Password: cfg.Password, Token: cfg.Token, Cookie: cfg.Cookie,
 		Timeout: cfg.Timeout, InsecureTLS: cfg.InsecureTLS, CAFile: cfg.CAFile,
 	}
+	if cfg.Auth == "cookie" && cfg.Cookie == "" {
+		// куку читаем из файла на каждом запросе: обновил файл — сервер подхватил,
+		// перезапускать Claude не нужно
+		u := cfg.URL
+		o.CookieFunc = func() (string, error) { return auth.LoadCookie(u) }
+	}
 	if cfg.Auth == "oidc" {
 		src, err := auth.NewSource(oidcConfig(cfg))
 		if err != nil {
@@ -152,6 +203,54 @@ func newClient(cfg *config.Config) (*odata.Client, error) {
 		o.TokenFunc = src.Token
 	}
 	return odata.New(o)
+}
+
+// loginCookie принимает куку со стандартного ввода и кладёт её в файл.
+// Через ввод, а не аргументом: иначе кука осядет в истории командной строки.
+func loginCookie(paste bool) error {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if cfg.URL == "" {
+		return errors.New("не задан адрес RX: выполните rxmcp setup")
+	}
+	var line string
+	if paste {
+		line, err = clipboard()
+		if err != nil {
+			return err
+		}
+		fmt.Println("Взял куку из буфера обмена.")
+	} else {
+		printCookieHelp(cfg.URL)
+		fmt.Print("Кука (или запустите rxmcp login --paste, чтобы взять из буфера обмена): ")
+		rd := bufio.NewReader(os.Stdin)
+		line, err = rd.ReadString('\n')
+		if err != nil && line == "" {
+			return err
+		}
+	}
+	if !strings.Contains(line, "=") {
+		line = "sungero_client=" + strings.TrimSpace(line)
+	}
+	if err := auth.SaveCookie(cfg.URL, line); err != nil {
+		return err
+	}
+	fmt.Printf("Сохранено в %s\n", auth.CookieFile(cfg.URL))
+	if cfg.Auth != "cookie" {
+		prof, err := config.LoadFile()
+		if err == nil {
+			prof["RXMCP_AUTH"] = "cookie"
+			if err := config.SaveFile(prof); err == nil {
+				fmt.Println("Способ входа в профиле переключён на cookie.")
+			}
+		}
+	}
+	fmt.Println("Проверка:")
+	os.Setenv("RXMCP_AUTH", "cookie")
+	os.Unsetenv("RXMCP_COOKIE")
+	return check()
 }
 
 func login() error {
@@ -431,52 +530,30 @@ func install() error {
 		exe = "rxmcp"
 	}
 	exe, _ = filepath.Abs(exe)
-	env := map[string]string{
-		"RXMCP_URL":   "https://rx.company.ru/Integration",
-		"RXMCP_LOGIN": "ivanov",
-	}
-	for _, k := range []string{"RXMCP_URL", "RXMCP_LOGIN", "RXMCP_TZ", "RXMCP_USER_ID"} {
-		if v := os.Getenv(k); v != "" {
-			env[k] = v
-		}
-	}
-	switch strings.ToLower(os.Getenv("RXMCP_AUTH")) {
-	case "cookie":
-		env["RXMCP_AUTH"] = "cookie"
-		env["RXMCP_COOKIE"] = "sungero_client=..."
-	case "oidc":
-		env["RXMCP_AUTH"] = "oidc"
-		for _, k := range []string{"RXMCP_OIDC_ISSUER", "RXMCP_OIDC_CLIENT_ID", "RXMCP_OIDC_FLOW"} {
-			if v := os.Getenv(k); v != "" {
-				env[k] = v
-			}
-		}
-	default:
-		env["RXMCP_PASSWORD"] = "***"
-	}
-	cfgPath := "~/Library/Application Support/Claude/claude_desktop_config.json"
-	if runtime.GOOS == "windows" {
-		cfgPath = `%APPDATA%\Claude\claude_desktop_config.json`
-	} else if runtime.GOOS == "linux" {
-		cfgPath = "~/.config/Claude/claude_desktop_config.json"
-	}
 	cfgJSON, _ := json.MarshalIndent(map[string]any{
-		"mcpServers": map[string]any{"rx": map[string]any{"command": exe, "env": env}},
+		"mcpServers": map[string]any{"rx": map[string]any{"command": exe}},
 	}, "", "  ")
-	fmt.Printf(`Claude Desktop: файл %s (Settings → Developer → Edit Config).
-Если в файле уже есть блок "preferences", не трогайте его: добавьте "mcpServers" рядом.
+	paths := []string{}
+	for _, t := range clientConfigs() {
+		paths = append(paths, t.title+": "+t.path)
+	}
+	fmt.Printf(`Обычно это делает `+"`rxmcp setup`"+` сам. Ниже то же вручную.
+
+Адрес RX, логин и секреты лежат в профиле %s,
+поэтому в конфиг клиента идёт только путь к бинарю:
+
 %s
 
+Куда положить:
+  %s
+
 Claude Code:
-  claude mcp add rx -e RXMCP_URL=%s -e RXMCP_LOGIN=%s -- %s
-  (остальные переменные из env выше добавьте через -e)
+  claude mcp add rx --scope user -- %s
 
-Cursor: файл ~/.cursor/mcp.json, тот же JSON, что для Claude Desktop.
-
-Запись (выполнять задания, отправлять задачи): добавьте в env "RXMCP_ALLOW_WRITE": "1".
-Вход через cookie браузера: RXMCP_AUTH=cookie %s install покажет вариант с RXMCP_COOKIE.
-Подробная инструкция с картинками: https://github.com/drxinfra/rxmcp/blob/main/docs/claude-desktop.md
-`, cfgPath, cfgJSON, env["RXMCP_URL"], env["RXMCP_LOGIN"], exe, exe)
+После правки перезапустите Claude Desktop или Cursor (Claude Code подхватывает сам).
+Запись (карточки, задачи, выполнение заданий): rxmcp config set RXMCP_ALLOW_WRITE=1
+Инструкция с картинками: https://drxinfra.ru/rxmcp#start
+`, config.FilePath(), cfgJSON, strings.Join(paths, "\n  "), exe)
 	return nil
 }
 

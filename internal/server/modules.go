@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -263,5 +265,142 @@ func (s *Server) registerModules() {
 			rows = 150
 		}
 		return text(s.svc.F.PlanCard(*p, m, names, rows)), nil, nil
+	})
+}
+
+// --- запись в agile-доски (только при RXMCP_ALLOW_WRITE=1) ---
+
+type createTicketIn struct {
+	Board       string   `json:"board" jsonschema:"доска: название, префикс или Id (rx_boards)"`
+	Column      string   `json:"column,omitempty" jsonschema:"колонка: название или Id; по умолчанию первая колонка доски"`
+	Name        string   `json:"name" jsonschema:"название карточки"`
+	Description string   `json:"description,omitempty" jsonschema:"описание"`
+	Deadline    string   `json:"deadline,omitempty" jsonschema:"срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (дата без времени = 18:00)"`
+	Priority    int      `json:"priority,omitempty" jsonschema:"приоритет 1..10, по умолчанию 5"`
+	Performers  []string `json:"performers,omitempty" jsonschema:"исполнители: фамилии или Id сотрудников"`
+	Tags        []string `json:"tags,omitempty" jsonschema:"теги: названия существующих тегов доски"`
+}
+
+type updateTicketIn struct {
+	ID          int64    `json:"id" jsonschema:"Id карточки (число из rx_tickets, не код вида ABC-12)"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Deadline    string   `json:"deadline,omitempty" jsonschema:"новый срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"`
+	Priority    int      `json:"priority,omitempty" jsonschema:"приоритет 1..10"`
+	Performers  []string `json:"performers,omitempty" jsonschema:"добавить исполнителей: фамилии или Id"`
+	Tags        []string `json:"tags,omitempty" jsonschema:"добавить теги: названия"`
+	Column      string   `json:"column,omitempty" jsonschema:"перенести в колонку: название или Id"`
+}
+
+func (s *Server) registerBoardWrite() {
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name: "rx_create_ticket",
+		Description: "Создать карточку на agile-доске Directum RX. Доску, колонку, исполнителей и теги можно называть словами, " +
+			"они будут сопоставлены сами. Теги должны уже существовать на доске, новые этот интерфейс не заводит. " +
+			"Перед вызовом перескажите пользователю доску, колонку, название и срок.",
+		Annotations: rw("Создать карточку", false),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in createTicketIn) (*mcp.CallToolResult, any, error) {
+		var dl *time.Time
+		if in.Deadline != "" {
+			t, err := parseDeadline(in.Deadline, s.svc.F.Loc)
+			if err != nil {
+				return fail(err)
+			}
+			dl = &t
+		}
+		msg := fmt.Sprintf("Создать карточку «%s» на доске %s", in.Name, in.Board)
+		if in.Column != "" {
+			msg += ", колонка " + in.Column
+		}
+		if dl != nil {
+			msg += ", срок " + s.svc.F.DateTime(dl)
+		}
+		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
+			return declined(err)
+		}
+		t, b, col, notes, err := s.svc.CreateTicket(ctx, rx.TicketInput{
+			Board: in.Board, Column: in.Column, Name: in.Name, Description: in.Description,
+			Deadline: dl, Priority: in.Priority, Performers: in.Performers, Tags: in.Tags,
+		})
+		if err != nil {
+			return fail(err)
+		}
+		s.log.Info("ticket created", "id", t.ID, "board", b.ID)
+		var sb strings.Builder
+		uid := t.UID
+		if uid == "" {
+			uid = fmt.Sprintf("#%d", t.ID)
+		}
+		fmt.Fprintf(&sb, "Карточка %s (id %d) создана на доске «%s», колонка «%s».\n", uid, t.ID, b.Name, col.Name)
+		sb.WriteString(s.svc.F.TicketCard(*t))
+		for _, n := range notes {
+			fmt.Fprintf(&sb, "\nВнимание: %s", n)
+		}
+		return text(sb.String()), nil, nil
+	})
+
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name: "rx_update_ticket",
+		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, а также добавить исполнителей и теги " +
+			"или перенести карточку в другую колонку. Переданные поля меняются, остальные остаются как были.",
+		Annotations: rw("Изменить карточку", false),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in updateTicketIn) (*mcp.CallToolResult, any, error) {
+		cur, err := s.svc.TicketByID(ctx, in.ID)
+		if err != nil {
+			return fail(err)
+		}
+		var dl *time.Time
+		if in.Deadline != "" {
+			t, e := parseDeadline(in.Deadline, s.svc.F.Loc)
+			if e != nil {
+				return fail(e)
+			}
+			dl = &t
+		}
+		var what []string
+		if in.Name != "" {
+			what = append(what, "название")
+		}
+		if in.Description != "" {
+			what = append(what, "описание")
+		}
+		if dl != nil {
+			what = append(what, "срок на "+s.svc.F.DateTime(dl))
+		}
+		if in.Priority > 0 {
+			what = append(what, fmt.Sprintf("приоритет %d", in.Priority))
+		}
+		if len(in.Performers) > 0 {
+			what = append(what, "исполнителей: "+strings.Join(in.Performers, ", "))
+		}
+		if len(in.Tags) > 0 {
+			what = append(what, "теги: "+strings.Join(in.Tags, ", "))
+		}
+		if in.Column != "" {
+			what = append(what, "перенос в колонку "+in.Column)
+		}
+		if len(what) == 0 {
+			return fail(errors.New("не указано ни одного изменения"))
+		}
+		uid := cur.UID
+		if uid == "" {
+			uid = fmt.Sprintf("#%d", cur.ID)
+		}
+		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Изменить карточку %s «%s»: %s?", uid, cur.Name, strings.Join(what, ", "))); err != nil || !ok {
+			return declined(err)
+		}
+		t, notes, err := s.svc.UpdateTicket(ctx, in.ID, rx.TicketInput{
+			Name: in.Name, Description: in.Description, Deadline: dl, Priority: in.Priority,
+			Performers: in.Performers, Tags: in.Tags,
+		}, in.Column)
+		if err != nil {
+			return fail(err)
+		}
+		s.log.Info("ticket updated", "id", in.ID)
+		out := s.svc.F.TicketCard(*t)
+		for _, n := range notes {
+			out += "\nВнимание: " + n
+		}
+		return text(out), nil, nil
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ func New(svc *rx.Service, opt Options) *Server {
 	s.registerModules()
 	if opt.AllowWrite {
 		s.registerWrite()
+		s.registerBoardWrite()
 	}
 	s.registerResources()
 	s.registerPrompts()
@@ -465,8 +467,31 @@ func (s *Server) confirm(ctx context.Context, req *mcp.CallToolRequest, msg stri
 	return true, nil
 }
 
+// relDays ловит «через 3 дня», «+3д», «3 дня».
+var relDays = regexp.MustCompile(`^(?:через\s+|\+)?(\d{1,4})\s*(?:д|дн|дня|дней|day|days)\.?$`)
+
 func parseDeadline(s string, loc *time.Location) (time.Time, error) {
 	s = strings.TrimSpace(s)
+	// Модель обычно даёт ISO, но человек в переписке говорит «завтра» и «через 3 дня».
+	// Разбираем и это: отказ из-за формата выглядит как поломка, хотя срок понятен.
+	day := func(n int) time.Time {
+		t := time.Now().In(loc).AddDate(0, 0, n)
+		return time.Date(t.Year(), t.Month(), t.Day(), 18, 0, 0, 0, loc)
+	}
+	switch strings.ToLower(s) {
+	case "сегодня", "today":
+		return day(0), nil
+	case "завтра", "tomorrow":
+		return day(1), nil
+	case "послезавтра":
+		return day(2), nil
+	}
+	if m := relDays.FindStringSubmatch(strings.ToLower(s)); m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err == nil && n >= 0 && n <= 3650 {
+			return day(n), nil
+		}
+	}
 	for _, l := range []string{"2006-01-02T15:04", "2006-01-02 15:04", "2006-01-02", "02.01.2006 15:04", "02.01.2006"} {
 		if t, err := time.ParseInLocation(l, s, loc); err == nil {
 			if len(l) <= len("2006-01-02") {
@@ -475,7 +500,7 @@ func parseDeadline(s string, loc *time.Location) (time.Time, error) {
 			return t, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("deadline %q: ожидается ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ", s)
+	return time.Time{}, fmt.Errorf("deadline %q: ожидается ГГГГ-ММ-ДД, ГГГГ-ММ-ДДTЧЧ:ММ, ДД.ММ.ГГГГ, «сегодня», «завтра» или «через N дней»", s)
 }
 
 // --- ресурсы ---

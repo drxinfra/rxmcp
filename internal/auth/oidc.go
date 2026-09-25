@@ -55,16 +55,12 @@ type Tokens struct {
 
 // DefaultCacheFile путь к файлу токенов: ~/.config/rxmcp/<host>.json (0600).
 func DefaultCacheFile(issuer, clientID string) string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		dir = os.TempDir()
-	}
 	u, _ := url.Parse(issuer)
 	host := "oidc"
 	if u != nil && u.Host != "" {
 		host = strings.ReplaceAll(u.Host, ":", "_")
 	}
-	return filepath.Join(dir, "rxmcp", fmt.Sprintf("tokens-%s-%s.json", host, sanitize(clientID)))
+	return filepath.Join(Dir(), fmt.Sprintf("tokens-%s-%s.json", host, sanitize(clientID)))
 }
 
 func sanitize(s string) string {

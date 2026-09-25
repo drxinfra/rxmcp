@@ -176,6 +176,7 @@ type Column struct {
 	WipLimit *int   `json:"WipLimit"`
 	Status   string `json:"Status"`
 	Tickets  []struct {
+		ID       int64   `json:"Id"` // Id ссылки карточки на колонку, нужен для записи
 		Position int     `json:"Position"`
 		Ticket   *Ticket `json:"Ticket"`
 	} `json:"Tickets"`

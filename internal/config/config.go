@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"github.com/drxinfra/rxmcp/internal/auth"
 	"os"
 	"strconv"
 	"strings"
@@ -49,52 +50,64 @@ type Config struct {
 	HTTPSecret string
 }
 
-// FromEnv собирает конфигурацию из окружения. Ошибки только по обязательным полям.
+// FromEnv собирает конфигурацию: окружение, а чего в нём нет — из файла профиля.
+// Так один и тот же бинарь работает и когда всё передано через env (контейнер, CI),
+// и когда в конфиге клиента указан только путь к нему.
 func FromEnv() (*Config, error) {
+	prof, err := LoadFile()
+	if err != nil {
+		return nil, err
+	}
+	get := func(k string) string {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+		return strings.TrimSpace(prof[k])
+	}
 	c := &Config{
-		URL:              strings.TrimRight(os.Getenv("RXMCP_URL"), "/"),
-		Auth:             strings.ToLower(strings.TrimSpace(env("RXMCP_AUTH", "basic"))),
-		Login:            os.Getenv("RXMCP_LOGIN"),
-		Password:         os.Getenv("RXMCP_PASSWORD"),
-		Token:            os.Getenv("RXMCP_TOKEN"),
-		Cookie:           os.Getenv("RXMCP_COOKIE"),
-		OIDCIssuer:       strings.TrimRight(os.Getenv("RXMCP_OIDC_ISSUER"), "/"),
-		OIDCClientID:     os.Getenv("RXMCP_OIDC_CLIENT_ID"),
-		OIDCClientSecret: os.Getenv("RXMCP_OIDC_CLIENT_SECRET"),
-		OIDCScope:        os.Getenv("RXMCP_OIDC_SCOPE"),
-		AllowWrite:       isTrue(os.Getenv("RXMCP_ALLOW_WRITE")),
-		InsecureTLS:      isTrue(os.Getenv("RXMCP_INSECURE_TLS")),
-		CAFile:           os.Getenv("RXMCP_CA"),
+		URL:              strings.TrimRight(get("RXMCP_URL"), "/"),
+		Auth:             strings.ToLower(strings.TrimSpace(firstNonEmpty(get("RXMCP_AUTH"), "basic"))),
+		Login:            get("RXMCP_LOGIN"),
+		Password:         get("RXMCP_PASSWORD"),
+		Token:            get("RXMCP_TOKEN"),
+		Cookie:           get("RXMCP_COOKIE"),
+		OIDCIssuer:       strings.TrimRight(get("RXMCP_OIDC_ISSUER"), "/"),
+		OIDCClientID:     get("RXMCP_OIDC_CLIENT_ID"),
+		OIDCClientSecret: get("RXMCP_OIDC_CLIENT_SECRET"),
+		OIDCScope:        get("RXMCP_OIDC_SCOPE"),
+		AllowWrite:       isTrue(get("RXMCP_ALLOW_WRITE")),
+		InsecureTLS:      isTrue(get("RXMCP_INSECURE_TLS")),
+		CAFile:           get("RXMCP_CA"),
 		Timeout:          30 * time.Second,
 		PageSize:         20,
 		MaxPageSize:      100,
 		MaxTextChars:     20000,
-		TimeZone:         os.Getenv("RXMCP_TZ"),
-		HTTPAddr:         os.Getenv("RXMCP_HTTP_ADDR"),
-		HTTPSecret:       os.Getenv("RXMCP_HTTP_SECRET"),
+		TimeZone:         get("RXMCP_TZ"),
+		HTTPAddr:         get("RXMCP_HTTP_ADDR"),
+		HTTPSecret:       get("RXMCP_HTTP_SECRET"),
 	}
-	if v := os.Getenv("RXMCP_TIMEOUT"); v != "" {
+	if v := get("RXMCP_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
 			return nil, fmt.Errorf("RXMCP_TIMEOUT: %w", err)
 		}
 		c.Timeout = d
 	}
-	if v := os.Getenv("RXMCP_OIDC_PORT"); v != "" {
+	if v := get("RXMCP_OIDC_PORT"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
 			return nil, fmt.Errorf("RXMCP_OIDC_PORT: %w", err)
 		}
 		c.OIDCPort = n
 	}
-	if v := os.Getenv("RXMCP_USER_ID"); v != "" {
+	if v := get("RXMCP_USER_ID"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("RXMCP_USER_ID: %w", err)
 		}
 		c.UserID = n
 	}
-	if v := os.Getenv("RXMCP_MAX_TEXT"); v != "" {
+	if v := get("RXMCP_MAX_TEXT"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1000 {
 			return nil, errors.New("RXMCP_MAX_TEXT: число не меньше 1000")
@@ -107,7 +120,7 @@ func FromEnv() (*Config, error) {
 // Validate проверяет, что подключение к RX задано полностью.
 func (c *Config) Validate() error {
 	if c.URL == "" {
-		return errors.New("не задан RXMCP_URL (адрес сервиса интеграции, например https://rx.company.ru/Integration)")
+		return errors.New("не задан адрес RX: выполните `rxmcp setup` или передайте RXMCP_URL (например https://rx.company.ru/Integration)")
 	}
 	if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
 		return errors.New("RXMCP_URL должен начинаться с http:// или https://")
@@ -115,15 +128,15 @@ func (c *Config) Validate() error {
 	switch c.Auth {
 	case "basic", "header":
 		if c.Login == "" || c.Password == "" {
-			return errors.New("не заданы RXMCP_LOGIN и RXMCP_PASSWORD")
+			return errors.New("не заданы логин и пароль: выполните `rxmcp setup` или передайте RXMCP_LOGIN и RXMCP_PASSWORD")
 		}
 	case "bearer":
 		if c.Token == "" {
 			return errors.New("RXMCP_AUTH=bearer требует RXMCP_TOKEN")
 		}
 	case "cookie":
-		if c.Cookie == "" {
-			return errors.New("RXMCP_AUTH=cookie требует RXMCP_COOKIE (значение заголовка Cookie из браузера после входа в RX)")
+		if c.Cookie == "" && !c.HasStoredCookie() {
+			return errors.New("нет куки: войдите в RX в браузере и выполните `rxmcp login --paste`, либо задайте RXMCP_COOKIE")
 		}
 	case "oidc":
 		if c.OIDCIssuer == "" || c.OIDCClientID == "" {
@@ -139,6 +152,12 @@ func (c *Config) Validate() error {
 		return errors.New("HTTP-режим требует RXMCP_HTTP_SECRET")
 	}
 	return nil
+}
+
+// HasStoredCookie сообщает, лежит ли кука в файле (её кладёт `rxmcp login`).
+func (c *Config) HasStoredCookie() bool {
+	_, err := auth.LoadCookie(c.URL)
+	return err == nil
 }
 
 // ODataURL возвращает корень OData.
@@ -160,11 +179,13 @@ func (c *Config) Location() *time.Location {
 	return time.Local
 }
 
-func env(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
 	}
-	return def
+	return ""
 }
 
 func isTrue(v string) bool {
