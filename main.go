@@ -238,6 +238,9 @@ func loginCookie(paste bool) error {
 		return err
 	}
 	fmt.Printf("Сохранено в %s\n", auth.CookieFile(cfg.URL))
+	if h := cookieHint(line); h != "" {
+		fmt.Println(h)
+	}
 	if cfg.Auth != "cookie" {
 		prof, err := config.LoadFile()
 		if err == nil {
@@ -251,6 +254,27 @@ func loginCookie(paste bool) error {
 	os.Setenv("RXMCP_AUTH", "cookie")
 	os.Unsetenv("RXMCP_COOKIE")
 	return check()
+}
+
+// cookieHint предупреждает о частой ошибке: в списке куки RX берут external_identity
+// вместо sungero_client. Обе выглядят как длинная строка base64, но сессию держит вторая,
+// и она заметно длиннее. Значение всё равно сохраняем: размеры зависят от системы.
+func cookieHint(cookie string) string {
+	v := strings.TrimSpace(cookie)
+	if i := strings.Index(v, "sungero_client="); i >= 0 {
+		v = v[i+len("sungero_client="):]
+	}
+	if j := strings.IndexAny(v, ";"); j >= 0 {
+		v = v[:j]
+	}
+	v = strings.TrimSpace(v)
+	if len(v) >= 1200 {
+		return ""
+	}
+	return "Внимание: значение короткое (" + fmt.Sprint(len(v)) + " символов). У sungero_client оно обычно вдвое длиннее.\n" +
+		"Если проверка ниже не пройдёт, скорее всего скопирована соседняя кука external_identity.\n" +
+		"Надёжный способ: F12 → Network → любой запрос к RX → Request Headers → строка cookie → Copy value,\n" +
+		"затем rxmcp login --paste: строку с несколькими куками программа принимает целиком."
 }
 
 func login() error {
@@ -419,7 +443,12 @@ func check() error {
 			return "", err
 		}
 		me = m
-		return fmt.Sprintf("%s (id %d, вход %s)", m.Name, m.ID, orQ(m.LoginType)), nil
+		// Тип входа RX отдаёт не всегда (у учёток из внешнего провайдера Login приходит null).
+		// Молчим об этом вместо «вход ?»: знак вопроса читается как поломка.
+		if m.LoginType == "" {
+			return fmt.Sprintf("%s (id %d)", m.Name, m.ID), nil
+		}
+		return fmt.Sprintf("%s (id %d, вход %s)", m.Name, m.ID, m.LoginType), nil
 	})
 	if me != nil {
 		step("мои задания в работе", func() (string, error) {
