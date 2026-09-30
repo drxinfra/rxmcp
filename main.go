@@ -60,7 +60,8 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   RXMCP_OIDC_CLIENT_ID, RXMCP_OIDC_CLIENT_SECRET, RXMCP_OIDC_SCOPE, RXMCP_OIDC_PORT
   RXMCP_OIDC_FLOW     code (по умолчанию, вход в браузере) | device (код на экране, для серверов)
   RXMCP_USER_ID       Id пользователя RX, если его нельзя вычислить по логину
-  RXMCP_ALLOW_WRITE   1 = включить инструменты записи (карточки, задачи, выполнение заданий)
+  RXMCP_ALLOW_WRITE   1 = включить инструменты записи (карточки, колонки, задачи, выполнение заданий)
+  RXMCP_CONFIRM       0 = не спрашивать подтверждение формой перед записью (если клиент её не показывает)
   RXMCP_INSECURE_TLS  1 = не проверять сертификат RX (только для тестовых стендов)
   RXMCP_CA            файл PEM с корневым сертификатом вашего УЦ
   RXMCP_TIMEOUT       таймаут запроса к RX, по умолчанию 30s
@@ -366,7 +367,7 @@ func serve(httpMode bool) error {
 	if httpMode && cfg.HTTPAddr == "" {
 		return errors.New("serve --http: задайте RXMCP_HTTP_ADDR и RXMCP_HTTP_SECRET")
 	}
-	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, MaxTextChars: cfg.MaxTextChars, Logger: log})
+	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	mode := "read-only"
@@ -536,6 +537,9 @@ func check() error {
 	fmt.Printf("\nИтог: %d ок, %d с ошибками.", okc, bad)
 	if cfg.AllowWrite {
 		fmt.Print(" Запись включена (RXMCP_ALLOW_WRITE=1), в проверке не используется.")
+		if !cfg.Confirm {
+			fmt.Print(" Подтверждение формой выключено (RXMCP_CONFIRM=0).")
+		}
 	} else {
 		fmt.Print(" Режим только чтение.")
 	}

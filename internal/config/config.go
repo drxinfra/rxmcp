@@ -33,6 +33,10 @@ type Config struct {
 	UserID int64
 	// Разрешить инструменты записи.
 	AllowWrite bool
+	// Спрашивать у клиента подтверждение формой перед записью (elicitation).
+	// RXMCP_CONFIRM=0 выключает: некоторые клиенты заявляют elicitation,
+	// но форму не показывают и молча отвечают отказом.
+	Confirm bool
 	// Не проверять TLS-сертификат RX.
 	InsecureTLS bool
 	// Путь к корневому сертификату, если у RX свой УЦ.
@@ -76,6 +80,7 @@ func FromEnv() (*Config, error) {
 		OIDCClientSecret: get("RXMCP_OIDC_CLIENT_SECRET"),
 		OIDCScope:        get("RXMCP_OIDC_SCOPE"),
 		AllowWrite:       isTrue(get("RXMCP_ALLOW_WRITE")),
+		Confirm:          !isFalse(get("RXMCP_CONFIRM")),
 		InsecureTLS:      isTrue(get("RXMCP_INSECURE_TLS")),
 		CAFile:           get("RXMCP_CA"),
 		Timeout:          30 * time.Second,
@@ -186,6 +191,14 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func isFalse(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "off", "нет":
+		return true
+	}
+	return false
 }
 
 func isTrue(v string) bool {

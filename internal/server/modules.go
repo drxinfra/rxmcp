@@ -292,7 +292,121 @@ type updateTicketIn struct {
 	Column      string   `json:"column,omitempty" jsonschema:"перенести в колонку: название или Id"`
 }
 
+type createColumnIn struct {
+	Board    string `json:"board" jsonschema:"доска: название, префикс или Id (rx_boards)"`
+	Name     string `json:"name" jsonschema:"название колонки"`
+	Position int    `json:"position,omitempty" jsonschema:"место слева направо, 1 = первая; по умолчанию перед финальной колонкой («Выполнено»)"`
+	IsFinal  bool   `json:"is_final,omitempty" jsonschema:"true = финальная: карточки в ней считаются закрытыми"`
+	WipLimit int    `json:"wip_limit,omitempty" jsonschema:"лимит карточек в колонке, 0 = без лимита"`
+}
+
+type deleteTicketsIn struct {
+	IDs []int64 `json:"ids" jsonschema:"Id карточек (числа из rx_board или rx_tickets, не коды вида ABC-12), до 100 за раз"`
+}
+
+const maxDeleteTickets = 100
+
+func ticketLabel(t rx.Ticket) string {
+	uid := t.UID
+	if uid == "" {
+		uid = fmt.Sprintf("#%d", t.ID)
+	}
+	name := []rune(t.Name)
+	if len(name) > 60 {
+		name = append(name[:57], []rune("…")...)
+	}
+	return fmt.Sprintf("%s «%s»", uid, string(name))
+}
+
+func ticketLabels(ts []rx.Ticket, max int) string {
+	var parts []string
+	for i, t := range ts {
+		if i == max {
+			parts = append(parts, fmt.Sprintf("и ещё %d", len(ts)-max))
+			break
+		}
+		parts = append(parts, ticketLabel(t))
+	}
+	return strings.Join(parts, "; ")
+}
+
 func (s *Server) registerBoardWrite() {
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name: "rx_create_column",
+		Description: "Создать колонку на agile-доске Directum RX: название, место на доске, финальная или нет, лимит карточек. " +
+			"Без position колонка встаёт перед финальной («Выполнено»). Перед вызовом перескажите пользователю доску, название и место.",
+		Annotations: rw("Создать колонку", false),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in createColumnIn) (*mcp.CallToolResult, any, error) {
+		msg := fmt.Sprintf("Создать колонку «%s» на доске %s", in.Name, in.Board)
+		if in.Position > 0 {
+			msg += fmt.Sprintf(", место %d слева", in.Position)
+		}
+		if in.IsFinal {
+			msg += ", финальная"
+		}
+		if in.WipLimit > 0 {
+			msg += fmt.Sprintf(", лимит %d", in.WipLimit)
+		}
+		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
+			return declined(err)
+		}
+		b, col, pos, notes, err := s.svc.CreateColumn(ctx, rx.ColumnInput{
+			Board: in.Board, Name: in.Name, Position: in.Position, IsFinal: in.IsFinal, WipLimit: in.WipLimit,
+		})
+		if err != nil {
+			return fail(err)
+		}
+		s.log.Info("column created", "id", col.ID, "board", b.ID)
+		out := fmt.Sprintf("Колонка «%s» (#%d) создана на доске «%s» (#%d), место %d слева.", col.Name, col.ID, b.Name, b.ID, pos)
+		for _, n := range notes {
+			out += "\nВнимание: " + n
+		}
+		return text(out + "\nДоска целиком: rx_board."), nil, nil
+	})
+
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name: "rx_delete_tickets",
+		Description: "Удалить карточки с agile-доски, как удаление в интерфейсе доски: карточка уходит с доски и получает статус Deleted. Вернуть её этим сервером нельзя. " +
+			"Нужны Id карточек (числа, не коды). Перед вызовом перечислите пользователю, какие карточки будут удалены.",
+		Annotations: rw("Удалить карточки с доски", true),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in deleteTicketsIn) (*mcp.CallToolResult, any, error) {
+		if len(in.IDs) > maxDeleteTickets {
+			return fail(fmt.Errorf("за раз не больше %d карточек, передано %d", maxDeleteTickets, len(in.IDs)))
+		}
+		ts, err := s.svc.TicketsByIDs(ctx, in.IDs)
+		if err != nil {
+			return fail(err)
+		}
+		msg := fmt.Sprintf("Удалить с доски карточки (%d): %s?", len(ts), ticketLabels(ts, 10))
+		if ok, err := s.confirm(ctx, req, msg); err != nil || !ok {
+			return declined(err)
+		}
+		res, err := s.svc.RemoveTickets(ctx, ts)
+		if res != nil {
+			s.log.Info("tickets removed", "removed", len(res.Removed), "blocked", len(res.Blocked))
+		}
+		var b strings.Builder
+		if res != nil && len(res.Removed) > 0 {
+			fmt.Fprintf(&b, "Удалено с доски: %d — %s\n", len(res.Removed), ticketLabels(res.Removed, 50))
+		}
+		if res != nil && len(res.Blocked) > 0 {
+			fmt.Fprintf(&b, "Не удалено, карточка заблокирована: %s\n", ticketLabels(res.Blocked, 50))
+		}
+		if res != nil && len(res.NotOnBoard) > 0 {
+			fmt.Fprintf(&b, "Уже не на доске: %s\n", ticketLabels(res.NotOnBoard, 50))
+		}
+		if res != nil {
+			for _, w := range res.Warnings {
+				fmt.Fprintf(&b, "Предупреждение доски: %s\n", w)
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(&b, "Ошибка: %v", err)
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: strings.TrimSpace(b.String())}}}, nil, nil
+		}
+		return text(strings.TrimSpace(b.String())), nil, nil
+	})
+
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name: "rx_create_ticket",
 		Description: "Создать карточку на agile-доске Directum RX. Доску, колонку, исполнителей и теги можно называть словами, " +

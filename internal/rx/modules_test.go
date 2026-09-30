@@ -123,3 +123,96 @@ func TestProjects(t *testing.T) {
 		t.Errorf("max_rows: %s", pc2)
 	}
 }
+
+// agileActions оставляет из записанных действий только действия досок.
+func agileActions(f *fakeRX) []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []map[string]any
+	for _, a := range f.actions {
+		if strings.HasPrefix(a["_action"].(string), "AgileBoards/") {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func TestCreateColumn(t *testing.T) {
+	f := newFake(t)
+	s := newSvc(t, f)
+	ctx := context.Background()
+	// Без места обычная колонка встаёт перед финальной «Готово»; закрытая «Старая» не считается.
+	b, col, pos, notes, err := s.CreateColumn(ctx, rx.ColumnInput{Board: "2", Name: " На проверке ", WipLimit: 5})
+	if err != nil || b.ID != 2 || col.ID != 21 || col.Name != "На проверке" || pos != 3 || len(notes) != 0 {
+		t.Fatalf("create: %v %+v pos=%d notes=%v", err, col, pos, notes)
+	}
+	acts := agileActions(f)
+	if len(acts) != 3 {
+		t.Fatalf("ждали CreateColumn, UpdateColumnConfig, MoveColumn: %+v", acts)
+	}
+	if acts[0]["_action"] != "AgileBoards/CreateColumn" || acts[0]["boardId"] != float64(2) {
+		t.Errorf("create: %+v", acts[0])
+	}
+	if u := acts[1]; u["_action"] != "AgileBoards/UpdateColumnConfig" || u["columnId"] != float64(21) || u["name"] != "На проверке" || u["isFinal"] != false || u["wipLimit"] != float64(5) {
+		t.Errorf("config: %+v", u)
+	}
+	if m := acts[2]; m["_action"] != "AgileBoards/MoveColumn" || m["columnRefId"] != float64(31) || m["position"] != float64(2) {
+		t.Errorf("move (позиции RX с нуля): %+v", m)
+	}
+	// Явное место считается с единицы.
+	if _, _, pos, _, err := s.CreateColumn(ctx, rx.ColumnInput{Board: "2", Name: "Бэклог", Position: 1}); err != nil || pos != 1 {
+		t.Fatalf("position 1: %v %d", err, pos)
+	}
+	if m := agileActions(f)[5]; m["position"] != float64(0) {
+		t.Errorf("move на первое место: %+v", m)
+	}
+	// Финальная без места остаётся в конце: MoveColumn не нужен.
+	n := len(agileActions(f))
+	if _, _, pos, _, err := s.CreateColumn(ctx, rx.ColumnInput{Board: "2", Name: "Архив", IsFinal: true}); err != nil || pos != 4 {
+		t.Fatalf("final: %v %d", err, pos)
+	}
+	if got := len(agileActions(f)) - n; got != 2 {
+		t.Errorf("для финальной в конце ждали 2 действия, было %d", got)
+	}
+	// Дубль имени отклоняется до любых действий.
+	n = len(agileActions(f))
+	if _, _, _, _, err := s.CreateColumn(ctx, rx.ColumnInput{Board: "2", Name: "в работе"}); err == nil || !strings.Contains(err.Error(), "уже есть") {
+		t.Errorf("дубль: %v", err)
+	}
+	if _, _, _, _, err := s.CreateColumn(ctx, rx.ColumnInput{Board: "2", Name: "  "}); err == nil {
+		t.Error("пустое имя должно отклоняться")
+	}
+	if len(agileActions(f)) != n {
+		t.Error("при ошибке проверки на доску ничего не должно уходить")
+	}
+}
+
+func TestRemoveTickets(t *testing.T) {
+	f := newFake(t)
+	s := newSvc(t, f)
+	ctx := context.Background()
+	ts, err := s.TicketsByIDs(ctx, []int64{245, 245, 0})
+	if err != nil || len(ts) != 1 || ts[0].BoardID != 2 {
+		t.Fatalf("tickets: %v %+v", err, ts)
+	}
+	if _, err := s.TicketsByIDs(ctx, nil); err == nil {
+		t.Error("пустой список должен отклоняться")
+	}
+	// 250 висит на доске двумя ссылками, одна заблокирована; 777 на доске нет.
+	ts = append(ts, rx.Ticket{ID: 250, UID: "DK-5", BoardID: 2}, rx.Ticket{ID: 777, BoardID: 2})
+	res, err := s.RemoveTickets(ctx, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Removed) != 1 || res.Removed[0].ID != 245 || len(res.Blocked) != 1 || res.Blocked[0].ID != 250 || len(res.NotOnBoard) != 1 || res.NotOnBoard[0].ID != 777 {
+		t.Fatalf("итог: %+v", res)
+	}
+	acts := agileActions(f)
+	if len(acts) != 1 || acts[0]["_action"] != "AgileBoards/RemoveTickets" || acts[0]["boardId"] != float64(2) {
+		t.Fatalf("ждали одно RemoveTickets на доску: %+v", acts)
+	}
+	refs := acts[0]["ticketRefIds"].([]any)
+	if len(refs) != 3 || refs[0] != float64(901) {
+		t.Errorf("снимаются ссылки, а не Id карточек, и все ссылки дубля: %v", refs)
+	}
+}

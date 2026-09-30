@@ -74,3 +74,18 @@ func TestBrokenProfileIsAnError(t *testing.T) {
 		t.Fatal("битый профиль должен ронять запуск, а не молча терять настройки")
 	}
 }
+
+func TestConfirmSetting(t *testing.T) {
+	t.Setenv("RXMCP_HOME", t.TempDir())
+	t.Setenv("RXMCP_URL", "https://rx.example.test/Integration")
+	for v, want := range map[string]bool{"": true, "1": true, "0": false, "false": false, "нет": false, "off": false} {
+		t.Setenv("RXMCP_CONFIRM", v)
+		c, err := FromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Confirm != want {
+			t.Errorf("RXMCP_CONFIRM=%q: Confirm=%v, ждали %v", v, c.Confirm, want)
+		}
+	}
+}

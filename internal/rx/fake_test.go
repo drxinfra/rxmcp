@@ -142,7 +142,7 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "IElectronicDocuments(300)/Versions(3001)/Body/$value":
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Write(docxBytes())
-	case strings.HasPrefix(p, "Docflow/") || strings.HasPrefix(p, "Shell/"):
+	case strings.HasPrefix(p, "Docflow/") || strings.HasPrefix(p, "Shell/") || strings.HasPrefix(p, "AgileBoards/"):
 		if r.Method != http.MethodPost {
 			w.WriteHeader(405)
 			return
@@ -160,6 +160,23 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			jsonOut(w, map[string]any{"value": 777})
+			return
+		}
+		switch p {
+		case "AgileBoards/CreateColumn": // как RX: в конец доски, с именем по умолчанию
+			jsonOut(w, map[string]any{"newColumnRefId": 31, "newColumnId": 21, "indexColumn": 3, "newColumnName": "Новая колонка", "isFinal": false})
+			return
+		case "AgileBoards/MoveColumn":
+			jsonOut(w, map[string]any{"newPositions": []any{}})
+			return
+		case "AgileBoards/RemoveTickets":
+			var blocked []int64
+			for _, r := range m["ticketRefIds"].([]any) {
+				if r == float64(904) {
+					blocked = append(blocked, 904)
+				}
+			}
+			jsonOut(w, map[string]any{"newPositions": []any{}, "blockedTicketRefIds": blocked, "warning": nil})
 			return
 		}
 		if p == "Docflow/CompleteAssignment" {
@@ -205,14 +222,19 @@ func (f *fakeRX) modules(w http.ResponseWriter, r *http.Request, p, filter strin
 		jsonOut(w, coll(map[string]any{"Id": 2, "Name": "Доска команды", "Prefix": "DK", "Status": "Active", "Owner": map[string]any{"Id": 5, "Name": "Владелец"}}))
 	case p == "IBoards(2)":
 		if strings.Contains(r.URL.Query().Get("$expand"), "Columns") {
-			jsonOut(w, map[string]any{"Id": 2, "Columns": []any{map[string]any{"IndexColumn": 1, "Column": map[string]any{"Id": 11}}, map[string]any{"IndexColumn": 0, "Column": map[string]any{"Id": 10}}}})
+			jsonOut(w, map[string]any{"Id": 2, "Columns": []any{
+				map[string]any{"Id": 41, "IndexColumn": 1, "Column": map[string]any{"Id": 11, "Name": "В работе", "Status": "Active"}},
+				map[string]any{"Id": 40, "IndexColumn": 0, "Column": map[string]any{"Id": 10, "Name": "Новые", "Status": "Active"}},
+				map[string]any{"Id": 42, "IndexColumn": 2, "Column": map[string]any{"Id": 12, "Name": "Готово", "IsFinal": true, "Status": "Active"}},
+				map[string]any{"Id": 43, "IndexColumn": 3, "Column": map[string]any{"Id": 13, "Name": "Старая", "Status": "Closed"}},
+			}})
 			return true
 		}
 		jsonOut(w, map[string]any{"Id": 2, "Name": "Доска команды", "Prefix": "DK", "Status": "Active", "Owner": map[string]any{"Id": 5, "Name": "Владелец"}})
 	case p == "IColumns":
 		jsonOut(w, coll(
-			map[string]any{"Id": 11, "Name": "В работе", "IsFinal": false, "Status": "Active", "Tickets": []any{map[string]any{"Position": 0, "Ticket": map[string]any{"Id": 245, "Name": "Задача 2", "Uid": "DK-3", "Status": "Active", "Deadline": "2099-01-01T00:00:00Z", "Performers": []any{map[string]any{"Performer": map[string]any{"Id": 7, "Name": "Иванов Иван"}}}}}}},
-			map[string]any{"Id": 10, "Name": "Новые", "IsFinal": false, "Status": "Active", "Tickets": []any{map[string]any{"Position": 1, "Ticket": map[string]any{"Id": 250, "Name": "Дубль", "Uid": "DK-5", "Status": "Active"}}, map[string]any{"Position": 0, "Ticket": map[string]any{"Id": 250, "Name": "Дубль", "Uid": "DK-5", "Status": "Active"}}}},
+			map[string]any{"Id": 11, "Name": "В работе", "IsFinal": false, "Status": "Active", "Tickets": []any{map[string]any{"Id": 901, "Position": 0, "Ticket": map[string]any{"Id": 245, "Name": "Задача 2", "Uid": "DK-3", "Status": "Active", "Deadline": "2099-01-01T00:00:00Z", "Performers": []any{map[string]any{"Performer": map[string]any{"Id": 7, "Name": "Иванов Иван"}}}}}}},
+			map[string]any{"Id": 10, "Name": "Новые", "IsFinal": false, "Status": "Active", "Tickets": []any{map[string]any{"Id": 903, "Position": 1, "Ticket": map[string]any{"Id": 250, "Name": "Дубль", "Uid": "DK-5", "Status": "Active"}}, map[string]any{"Id": 904, "Position": 0, "Ticket": map[string]any{"Id": 250, "Name": "Дубль", "Uid": "DK-5", "Status": "Active"}}}},
 		))
 	case p == "ITickets(245)":
 		jsonOut(w, map[string]any{"Id": 245, "Name": "Задача 2", "Uid": "DK-3", "Status": "Active", "Priority": 8, "BoardId": 2, "CreateDate": "2026-05-12T10:00:00+03:00", "Deadline": "2099-01-01T00:00:00Z", "Laboriousness": 4.5, "Description": "Сделать хорошо",
