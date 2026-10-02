@@ -166,6 +166,12 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 		case "AgileBoards/CreateColumn": // как RX: в конец доски, с именем по умолчанию
 			jsonOut(w, map[string]any{"newColumnRefId": 31, "newColumnId": 21, "indexColumn": 3, "newColumnName": "Новая колонка", "isFinal": false})
 			return
+		case "AgileBoards/UploadPersistedBinaryData":
+			jsonOut(w, map[string]any{"value": 4242})
+			return
+		case "AgileBoards/SaveTicket":
+			jsonOut(w, map[string]any{"IsSuccessed": true, "TicketRef": map[string]any{"Id": 901, "Ticket": map[string]any{"Id": 245}}})
+			return
 		case "AgileBoards/MoveColumn":
 			jsonOut(w, map[string]any{"newPositions": []any{}})
 			return

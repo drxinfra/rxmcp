@@ -181,14 +181,14 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket",
-		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket.",
+		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket.",
 		Annotations: ro("Карточка"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketIDIn) (*mcp.CallToolResult, any, error) {
 		t, err := s.svc.TicketByID(ctx, in.ID)
 		if err != nil {
 			return fail(err)
 		}
-		return text(s.svc.F.TicketCard(*t)), nil, nil
+		return text(s.svc.F.TicketCard(*t) + s.ticketComments(ctx, t)), nil, nil
 	})
 
 	// Проекты и планы
@@ -270,26 +270,46 @@ func (s *Server) registerModules() {
 
 // --- запись в agile-доски (только при RXMCP_ALLOW_WRITE=1) ---
 
+type attachIn struct {
+	URL        string `json:"url,omitempty" jsonschema:"ссылка http или https"`
+	File       string `json:"file,omitempty" jsonschema:"полный путь к файлу на компьютере, где запущен rxmcp; файл загрузится в хранилище доски, до 20 МБ"`
+	DocumentID int64  `json:"document_id,omitempty" jsonschema:"Id документа RX из rx_find_documents: к карточке добавится ссылка на него"`
+	Name       string `json:"name,omitempty" jsonschema:"подпись вложения; по умолчанию имя файла, название документа или сама ссылка"`
+}
+
+func attachInputs(in []attachIn) ([]rx.AttachmentInput, []string) {
+	out := make([]rx.AttachmentInput, 0, len(in))
+	labels := make([]string, 0, len(in))
+	for _, a := range in {
+		x := rx.AttachmentInput{URL: a.URL, File: a.File, DocumentID: a.DocumentID, Name: a.Name}
+		out = append(out, x)
+		labels = append(labels, x.Label())
+	}
+	return out, labels
+}
+
 type createTicketIn struct {
-	Board       string   `json:"board" jsonschema:"доска: название, префикс или Id (rx_boards)"`
-	Column      string   `json:"column,omitempty" jsonschema:"колонка: название или Id; по умолчанию первая колонка доски"`
-	Name        string   `json:"name" jsonschema:"название карточки"`
-	Description string   `json:"description,omitempty" jsonschema:"описание"`
-	Deadline    string   `json:"deadline,omitempty" jsonschema:"срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (дата без времени = 18:00)"`
-	Priority    int      `json:"priority,omitempty" jsonschema:"приоритет 1..10, по умолчанию 5"`
-	Performers  []string `json:"performers,omitempty" jsonschema:"исполнители: фамилии или Id сотрудников"`
-	Tags        []string `json:"tags,omitempty" jsonschema:"теги: названия существующих тегов доски"`
+	Board       string     `json:"board" jsonschema:"доска: название, префикс или Id (rx_boards)"`
+	Column      string     `json:"column,omitempty" jsonschema:"колонка: название или Id; по умолчанию первая колонка доски"`
+	Name        string     `json:"name" jsonschema:"название карточки"`
+	Description string     `json:"description,omitempty" jsonschema:"описание"`
+	Deadline    string     `json:"deadline,omitempty" jsonschema:"срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (дата без времени = 18:00)"`
+	Priority    int        `json:"priority,omitempty" jsonschema:"приоритет 1..10, по умолчанию 5"`
+	Performers  []string   `json:"performers,omitempty" jsonschema:"исполнители: фамилии или Id сотрудников"`
+	Tags        []string   `json:"tags,omitempty" jsonschema:"теги: названия существующих тегов доски"`
+	Attachments []attachIn `json:"attachments,omitempty" jsonschema:"вложения: в каждом ровно одно из url, file, document_id"`
 }
 
 type updateTicketIn struct {
-	ID          int64    `json:"id" jsonschema:"Id карточки (число из rx_tickets, не код вида ABC-12)"`
-	Name        string   `json:"name,omitempty" jsonschema:"новое название; не передавайте, если менять не нужно"`
-	Description string   `json:"description,omitempty" jsonschema:"новое описание целиком; не передавайте, если менять не нужно"`
-	Deadline    string   `json:"deadline,omitempty" jsonschema:"новый срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"`
-	Priority    int      `json:"priority,omitempty" jsonschema:"приоритет 1..10"`
-	Performers  []string `json:"performers,omitempty" jsonschema:"добавить исполнителей: фамилии или Id"`
-	Tags        []string `json:"tags,omitempty" jsonschema:"добавить теги: названия"`
-	Column      string   `json:"column,omitempty" jsonschema:"перенести в колонку: название или Id"`
+	ID          int64      `json:"id" jsonschema:"Id карточки (число из rx_tickets, не код вида ABC-12)"`
+	Name        string     `json:"name,omitempty" jsonschema:"новое название; не передавайте, если менять не нужно"`
+	Description string     `json:"description,omitempty" jsonschema:"новое описание целиком; не передавайте, если менять не нужно"`
+	Deadline    string     `json:"deadline,omitempty" jsonschema:"новый срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"`
+	Priority    int        `json:"priority,omitempty" jsonschema:"приоритет 1..10"`
+	Performers  []string   `json:"performers,omitempty" jsonschema:"добавить исполнителей: фамилии или Id"`
+	Tags        []string   `json:"tags,omitempty" jsonschema:"добавить теги: названия"`
+	Column      string     `json:"column,omitempty" jsonschema:"перенести в колонку: название или Id"`
+	Attachments []attachIn `json:"attachments,omitempty" jsonschema:"добавить вложения: в каждом ровно одно из url, file, document_id"`
 }
 
 type createColumnIn struct {
@@ -298,6 +318,27 @@ type createColumnIn struct {
 	Position int    `json:"position,omitempty" jsonschema:"место слева направо, 1 = первая; по умолчанию перед финальной колонкой («Выполнено»)"`
 	IsFinal  bool   `json:"is_final,omitempty" jsonschema:"true = финальная: карточки в ней считаются закрытыми"`
 	WipLimit int    `json:"wip_limit,omitempty" jsonschema:"лимит карточек в колонке, 0 = без лимита"`
+}
+
+type commentTicketIn struct {
+	ID   int64  `json:"id" jsonschema:"числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"`
+	Text string `json:"text" jsonschema:"текст комментария, обычный текст; виден всем участникам доски"`
+}
+
+// ticketComments дописывает к карточке блок комментариев. Сбой чтения комментариев
+// карточку не роняет: модель получает карточку и причину, почему комментариев нет.
+func (s *Server) ticketComments(ctx context.Context, t *rx.Ticket) string {
+	if t.Comments == 0 {
+		return ""
+	}
+	cs, err := s.svc.TicketComments(ctx, t)
+	if err != nil {
+		return fmt.Sprintf("\nКомментарии прочитать не удалось: %v", err)
+	}
+	if len(cs) == 0 {
+		return ""
+	}
+	return "\n" + s.svc.F.Comments(cs)
 }
 
 type deleteTicketsIn struct {
@@ -364,6 +405,36 @@ func (s *Server) registerBoardWrite() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name:        "rx_comment_ticket",
+		Description: "Добавить комментарий к карточке agile-доски от имени пользователя. Комментарий виден всем участникам доски; изменить или удалить его этим сервером нельзя. Используйте, чтобы записать ход работы или ответить в обсуждении; поля карточки меняет rx_update_ticket, существующие комментарии показывает rx_ticket. Нужен числовой Id карточки из rx_tickets или rx_board. Перед вызовом покажите пользователю текст комментария.",
+		Annotations: rw("Комментарий к карточке", false),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in commentTicketIn) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(in.Text) == "" {
+			return fail(errors.New("пустой комментарий"))
+		}
+		t, err := s.svc.TicketByID(ctx, in.ID)
+		if err != nil {
+			return fail(err)
+		}
+		label := t.UID
+		if label == "" {
+			label = fmt.Sprintf("#%d", t.ID)
+		}
+		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Добавить комментарий к карточке %s «%s»?", label, t.Name)); err != nil || !ok {
+			return declined(err)
+		}
+		if err := s.svc.AddTicketComment(ctx, t, in.Text); err != nil {
+			return fail(err)
+		}
+		s.log.Info("ticket comment added", "id", t.ID)
+		out := fmt.Sprintf("Комментарий добавлен к карточке %s (id %d).", label, t.ID)
+		if cs, err := s.svc.TicketComments(ctx, t); err == nil && len(cs) > 0 {
+			out += "\n" + s.svc.F.Comments(cs)
+		}
+		return text(out), nil, nil
+	})
+
+	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_delete_tickets",
 		Description: "Удалить карточки с agile-доски так же, как это делает кнопка удаления в интерфейсе: карточка уходит с доски и получает статус Deleted. Вернуть её этим сервером нельзя. Нужны числовые Id карточек из rx_board или rx_tickets, не коды; до 100 за вызов. Перед вызовом перечислите пользователю, какие карточки будут удалены.",
 		Annotations: rw("Удалить карточки с доски", true),
@@ -407,7 +478,7 @@ func (s *Server) registerBoardWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_create_ticket",
-		Description: "Создать карточку на agile-доске. Доску, колонку, исполнителей и теги можно называть словами, сервер сопоставит их сам; теги должны уже существовать на доске. Без column карточка попадает в первую колонку. Меняет данные сразу. Для поручения с контролем срока в самой системе используйте rx_create_simple_task. Перед вызовом перескажите пользователю доску, колонку, название и срок.",
+		Description: "Создать карточку на agile-доске. Доску, колонку, исполнителей и теги можно называть словами, сервер сопоставит их сам; теги должны уже существовать на доске. В attachments можно сразу приложить ссылки, документы RX по Id и файлы с диска. Без column карточка попадает в первую колонку. Меняет данные сразу. Для поручения с контролем срока в самой системе используйте rx_create_simple_task. Перед вызовом перескажите пользователю доску, колонку, название и срок.",
 		Annotations: rw("Создать карточку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createTicketIn) (*mcp.CallToolResult, any, error) {
 		var dl *time.Time
@@ -425,12 +496,16 @@ func (s *Server) registerBoardWrite() {
 		if dl != nil {
 			msg += ", срок " + s.svc.F.DateTime(dl)
 		}
+		atts, attLabels := attachInputs(in.Attachments)
+		if len(atts) > 0 {
+			msg += ", вложения: " + strings.Join(attLabels, "; ")
+		}
 		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
 			return declined(err)
 		}
 		t, b, col, notes, err := s.svc.CreateTicket(ctx, rx.TicketInput{
 			Board: in.Board, Column: in.Column, Name: in.Name, Description: in.Description,
-			Deadline: dl, Priority: in.Priority, Performers: in.Performers, Tags: in.Tags,
+			Deadline: dl, Priority: in.Priority, Performers: in.Performers, Tags: in.Tags, Attachments: atts,
 		})
 		if err != nil {
 			return fail(err)
@@ -451,7 +526,7 @@ func (s *Server) registerBoardWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_update_ticket",
-		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, добавить исполнителей и теги или перенести в другую колонку. Меняются только переданные поля, остальные остаются. Убрать исполнителя или тег этим инструментом нельзя. Нужен числовой Id карточки из rx_tickets или rx_board. Меняет данные сразу.",
+		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, добавить исполнителей, теги и вложения (ссылка, документ RX по Id, файл с диска) или перенести в другую колонку. Меняются только переданные поля, остальные остаются. Убрать исполнителя, тег или вложение этим инструментом нельзя. Нужен числовой Id карточки из rx_tickets или rx_board. Меняет данные сразу.",
 		Annotations: rw("Изменить карточку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in updateTicketIn) (*mcp.CallToolResult, any, error) {
 		cur, err := s.svc.TicketByID(ctx, in.ID)
@@ -488,6 +563,10 @@ func (s *Server) registerBoardWrite() {
 		if in.Column != "" {
 			what = append(what, "перенос в колонку "+in.Column)
 		}
+		atts, attLabels := attachInputs(in.Attachments)
+		if len(atts) > 0 {
+			what = append(what, "вложения: "+strings.Join(attLabels, "; "))
+		}
 		if len(what) == 0 {
 			return fail(errors.New("не указано ни одного изменения"))
 		}
@@ -500,7 +579,7 @@ func (s *Server) registerBoardWrite() {
 		}
 		t, notes, err := s.svc.UpdateTicket(ctx, in.ID, rx.TicketInput{
 			Name: in.Name, Description: in.Description, Deadline: dl, Priority: in.Priority,
-			Performers: in.Performers, Tags: in.Tags,
+			Performers: in.Performers, Tags: in.Tags, Attachments: atts,
 		}, in.Column)
 		if err != nil {
 			return fail(err)

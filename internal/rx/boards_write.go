@@ -63,6 +63,7 @@ type ticketWire struct {
 	EntityVersion       int       `json:"EntityVersion"`
 	TicketsTags         []tagRef  `json:"TicketsTags,omitempty"`
 	Performers          []perfRef `json:"Performers,omitempty"`
+	Attachments         []attRef  `json:"Attachments,omitempty"`
 }
 
 // TicketInput описывает карточку в человеческих терминах: доску и колонку
@@ -76,6 +77,7 @@ type TicketInput struct {
 	Priority    int      // 1..10, 0 = по умолчанию 5
 	Performers  []string // имена сотрудников или Id
 	Tags        []string // имена тегов
+	Attachments []AttachmentInput
 }
 
 // Notes собирает предупреждения, которые не являются ошибкой,
@@ -330,6 +332,10 @@ func (s *Service) CreateTicket(ctx context.Context, in TicketInput) (*Ticket, *B
 	if err != nil {
 		return nil, b, col, notes, err
 	}
+	atts, err := s.resolveAttachments(ctx, in.Attachments)
+	if err != nil {
+		return nil, b, col, notes, err
+	}
 	pr := in.Priority
 	if pr <= 0 {
 		pr = 5
@@ -341,6 +347,7 @@ func (s *Service) CreateTicket(ctx context.Context, in TicketInput) (*Ticket, *B
 		ID: newID, BoardID: b.ID, Name: in.Name, Description: in.Description,
 		Priority: pr, IsEnabled: true, IsDescribed: in.Description != "",
 		TicketsTags: refsFromTags(tagIDs), Performers: refsFromPerformers(perfIDs),
+		Attachments: atts, AttachmentsCount: len(atts),
 	}
 	if in.Deadline != nil {
 		d := in.Deadline.UTC().Format(time.RFC3339)
@@ -477,6 +484,14 @@ func (s *Service) UpdateTicket(ctx context.Context, ticketID int64, in TicketInp
 		}
 		t.Performers = refsFromPerformers(add)
 	}
+	if len(in.Attachments) > 0 {
+		atts, err := s.resolveAttachments(ctx, in.Attachments)
+		if err != nil {
+			return nil, notes, err
+		}
+		t.Attachments = atts
+	}
+	t.AttachmentsCount = len(cur.Attachments) + len(t.Attachments)
 	r, err := s.saveTicket(ctx, cur.BoardID, ticketRef{ID: refID, Position: 0, ColumnID: colID, Ticket: t})
 	if err != nil {
 		return nil, notes, err

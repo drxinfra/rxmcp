@@ -2,6 +2,8 @@ package rx_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -214,5 +216,57 @@ func TestRemoveTickets(t *testing.T) {
 	refs := acts[0]["ticketRefIds"].([]any)
 	if len(refs) != 3 || refs[0] != float64(901) {
 		t.Errorf("снимаются ссылки, а не Id карточек, и все ссылки дубля: %v", refs)
+	}
+}
+
+// Вложения уходят в SaveTicket записями «название и адрес»: ссылка как есть,
+// документ RX гиперссылкой на стенд, файл через загрузку в хранилище досок.
+func TestTicketAttachments(t *testing.T) {
+	f := newFake(t)
+	s := newSvc(t, f)
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "отчёт.pdf")
+	if err := os.WriteFile(file, []byte("%PDF-1.4"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.UpdateTicket(ctx, 245, rx.TicketInput{Attachments: []rx.AttachmentInput{
+		{URL: "https://example.com/a"},
+		{DocumentID: 300, Name: "Договор"},
+		{File: file},
+	}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var save, upload map[string]any
+	for _, a := range agileActions(f) {
+		switch a["_action"] {
+		case "AgileBoards/SaveTicket":
+			save = a
+		case "AgileBoards/UploadPersistedBinaryData":
+			upload = a
+		}
+	}
+	if upload == nil || upload["file"] != "JVBERi0xLjQ=" {
+		t.Fatalf("файл должен уйти в хранилище в base64: %v", upload)
+	}
+	atts := save["ticketReference"].(map[string]any)["Ticket"].(map[string]any)["Attachments"].([]any)
+	if len(atts) != 3 {
+		t.Fatalf("вложения: %v", atts)
+	}
+	want := []struct{ url, name string }{
+		{"https://example.com/a", "https://example.com/a"},
+		{"/Sungero?type=030d8d67-9b94-4f0d-bcc6-691016eb70f3&id=300", "Договор"},
+		{"storage://4242&application/pdf", "отчёт.pdf"},
+	}
+	for i, w := range want {
+		a := atts[i].(map[string]any)
+		if !strings.HasSuffix(a["Url"].(string), w.url) || a["Name"] != w.name || a["State"] != "Added" || a["Id"] != float64(-1) {
+			t.Errorf("вложение %d: %v", i, a)
+		}
+	}
+	for _, bad := range []rx.AttachmentInput{{}, {URL: "ftp://x/y"}, {URL: "https://a", DocumentID: 1}, {File: filepath.Join(t.TempDir(), "нет")}} {
+		if _, _, err := s.UpdateTicket(ctx, 245, rx.TicketInput{Attachments: []rx.AttachmentInput{bad}}, ""); err == nil {
+			t.Errorf("должно отклоняться: %+v", bad)
+		}
 	}
 }

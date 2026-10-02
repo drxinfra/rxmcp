@@ -232,16 +232,16 @@ func (f Formatter) TicketCard(t Ticket) string {
 		fmt.Fprintf(&b, "Теги: %s\n", strings.Join(tags, ", "))
 	}
 	if t.Votes > 0 || t.Comments > 0 {
-		fmt.Fprintf(&b, "Голосов: %d · комментариев: %d (текст комментариев через API недоступен)\n", t.Votes, t.Comments)
+		fmt.Fprintf(&b, "Голосов: %d · комментариев: %d\n", t.Votes, t.Comments)
 	}
 	if len(t.Attachments) > 0 {
 		b.WriteString("Вложения и связи:\n")
 		for _, a := range t.Attachments {
-			fmt.Fprintf(&b, "  %s", a.Name)
-			if id := idFromURL(a.URL); id != 0 {
-				fmt.Fprintf(&b, " (id %d)", id)
+			if k := attachmentKind(a.URL); k == a.Name {
+				fmt.Fprintf(&b, "  %s\n", a.Name)
+			} else {
+				fmt.Fprintf(&b, "  %s (%s)\n", a.Name, k)
 			}
-			b.WriteString("\n")
 		}
 	}
 	if d := strings.TrimSpace(t.Description); d != "" {

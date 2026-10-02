@@ -96,7 +96,8 @@ MCP-сервер для Directum RX. Даёт ИИ-ассистенту (Claude 
 | `rx_complete_assignment` | выполнить задание с результатом | `POST Docflow/CompleteAssignment` |
 | `rx_create_simple_task` | создать простую задачу исполнителям и стартовать | `POST Docflow/CreateSimpleTask`, затем `Docflow/StartTask` |
 | `rx_abort_task` | прекратить задачу | `POST Shell/AbortTask` |
-| `rx_create_ticket`, `rx_update_ticket` | завести карточку; изменить или перенести | `POST AgileBoards/SaveTicket` |
+| `rx_create_ticket`, `rx_update_ticket` | завести карточку; изменить, перенести, добавить вложения | `POST AgileBoards/SaveTicket`; вложение это запись «название и адрес» со `State: Added`. Файл сначала уходит в `AgileBoards/UploadPersistedBinaryData` (base64) и получает адрес `storage://<Id>&<тип>`, документ RX прикладывается гиперссылкой `Sungero?type=…&id=…` |
+| `rx_comment_ticket` | добавить комментарий к карточке; читает комментарии `rx_ticket` | `POST TeamsCommonAPI/CreateComment` и `LoadComments`: кроме Id карточки и доски нужны идентификаторы их типов, они зашиты в `internal/rx/comments.go` и заменяются через `RXMCP_TICKET_TYPE_GUID`, `RXMCP_BOARD_TYPE_GUID` |
 | `rx_delete_tickets` | удалить карточки с доски; карточка остаётся в `ITickets` со статусом `Deleted` | `POST AgileBoards/RemoveTickets` по Id ссылок карточек на колонки (`IColumns?$expand=Tickets`), а не по Id карточек |
 | `rx_create_column` | колонка на доске | `POST AgileBoards/CreateColumn` (в конец, «Новая колонка»), `UpdateColumnConfig` (имя, финальная, лимит), `MoveColumn` (место, с нуля) |
 
