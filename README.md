@@ -147,3 +147,6 @@ go test ./...
 ## Лицензия
 
 Apache-2.0. Directum RX — продукт Directum; проект с вендором не связан, торговые знаки принадлежат правообладателям.
+
+
+[![Directum RX MCP (rxmcp) MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/drxinfra/rxmcp/badges/card.svg)](https://glama.ai/mcp/servers/drxinfra/rxmcp)
