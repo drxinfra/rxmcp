@@ -52,6 +52,23 @@ type Config struct {
 	// HTTP-режим: адрес и общий секрет.
 	HTTPAddr   string
 	HTTPSecret string
+	// Адрес каталога справки, если она лежит не рядом с веб-клиентом.
+	HelpURL string
+}
+
+// HelpBase адрес каталога справки на стенде. По умолчанию справка лежит рядом с веб-клиентом:
+// https://rx.company.ru/Client/WebHelp/ru-RU (стенд сам перенаправит, если каталог другой).
+func (c *Config) HelpBase() string {
+	if c.HelpURL != "" {
+		return strings.TrimRight(c.HelpURL, "/")
+	}
+	u := c.URL
+	if i := strings.Index(u, "://"); i >= 0 {
+		if j := strings.IndexByte(u[i+3:], '/'); j >= 0 {
+			u = u[:i+3+j]
+		}
+	}
+	return u + "/Client/WebHelp/ru-RU"
 }
 
 // FromEnv собирает конфигурацию: окружение, а чего в нём нет — из файла профиля.
@@ -90,6 +107,7 @@ func FromEnv() (*Config, error) {
 		TimeZone:         get("RXMCP_TZ"),
 		HTTPAddr:         get("RXMCP_HTTP_ADDR"),
 		HTTPSecret:       get("RXMCP_HTTP_SECRET"),
+		HelpURL:          get("RXMCP_HELP_URL"),
 	}
 	if v := get("RXMCP_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)

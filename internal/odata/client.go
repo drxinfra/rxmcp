@@ -226,6 +226,18 @@ func (c *Client) Get(ctx context.Context, set string, id int64, q Query, out any
 	return nil
 }
 
+// One читает одну сущность как есть: GET {base}/{set}({id})?$…
+func (c *Client) One(ctx context.Context, set string, id int64, q Query) ([]byte, error) {
+	body, err := c.get(ctx, fmt.Sprintf("%s(%d)", set, id), q.values())
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, &Error{Status: 404, Method: "GET", Path: fmt.Sprintf("%s(%d)", set, id)}
+	}
+	return body, nil
+}
+
 // Raw делает GET по относительному пути и возвращает тело как есть.
 func (c *Client) Raw(ctx context.Context, path string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/"+strings.TrimLeft(path, "/"), nil)
@@ -253,6 +265,35 @@ func (c *Client) Raw(ctx context.Context, path string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("тело больше %d МБ, не читаем", c.MaxBody>>20)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// Abs читает абсолютный адрес (справка лежит рядом с веб-клиентом, вне OData) и возвращает
+// тело и итоговый адрес после перенаправлений. Учётка добавляется только на тот же хост, что у RX.
+func (c *Client) Abs(ctx context.Context, rawURL string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if b, err := url.Parse(c.base); err == nil && b.Host == req.URL.Host {
+		if err := c.setAuth(req); err != nil {
+			return nil, "", err
+		}
+	}
+	req.Header.Set("Accept", "text/html,*/*")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", netErr(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, c.MaxBody))
+	if err != nil {
+		return nil, "", err
+	}
+	c.debug("GET", rawURL, resp.StatusCode, len(data))
+	if resp.StatusCode >= 300 {
+		return nil, "", &Error{Status: resp.StatusCode, Method: "GET", Path: rawURL}
+	}
+	return data, resp.Request.URL.String(), nil
 }
 
 // Action вызывает действие модуля: POST {base}/{module}/{action} с JSON-параметрами.

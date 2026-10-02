@@ -21,6 +21,7 @@ import (
 
 	"github.com/drxinfra/rxmcp/internal/auth"
 	"github.com/drxinfra/rxmcp/internal/config"
+	"github.com/drxinfra/rxmcp/internal/help"
 	"github.com/drxinfra/rxmcp/internal/odata"
 	"github.com/drxinfra/rxmcp/internal/rx"
 	"github.com/drxinfra/rxmcp/internal/server"
@@ -36,6 +37,8 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   rxmcp login           обновить вход (кука из браузера или вход через провайдера)
   rxmcp login --paste   то же, но куку берёт из буфера обмена
   rxmcp check           проверить подключение к RX одним чтением и показать, что работает
+  rxmcp docs index      скачать справку со своего стенда, чтобы помощник отвечал по ней
+                        (если не выполнить, справка скачается сама при первом вопросе)
 
 Остальные команды:
   rxmcp                 запустить сервер по stdio (так его вызывает MCP-клиент)
@@ -45,6 +48,7 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   rxmcp install         напечатать фрагменты конфигурации для клиентов; --apply прописать сразу
   rxmcp query SET [$k=v …]   один GET к OData для отладки, например: rxmcp query IAssignments '$top=1'
   rxmcp call Module/Action '{json}'   один POST действия для отладки (меняет данные, если действие пишущее)
+  rxmcp docs search СЛОВА   поиск по скачанной справке; docs topic ФАЙЛ, docs status
   rxmcp version
 
 Настройки лежат в профиле (rxmcp config path), права 0600. Переменные окружения
@@ -68,6 +72,7 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   RXMCP_MAX_TEXT      лимит текста документа в символах, по умолчанию 20000
   RXMCP_TZ            часовой пояс для дат, например Europe/Moscow (по умолчанию системный)
   RXMCP_HOME          каталог настроек, по умолчанию ~/.config/rxmcp
+  RXMCP_HELP_URL      каталог справки, если он не рядом с веб-клиентом (по умолчанию <адрес RX>/Client/WebHelp/ru-RU)
   RXMCP_HTTP_ADDR     адрес для serve --http, например 127.0.0.1:8765
   RXMCP_HTTP_SECRET   общий секрет для HTTP-режима, клиент шлёт Authorization: Bearer <секрет>
 `
@@ -105,6 +110,8 @@ func run(args []string) error {
 			return fmt.Errorf("install: неизвестный аргумент %q (есть --apply)", a)
 		}
 		return install()
+	case "docs":
+		return docs(args)
 	case "check":
 		return check()
 	case "query":
@@ -367,7 +374,15 @@ func serve(httpMode bool) error {
 	if httpMode && cfg.HTTPAddr == "" {
 		return errors.New("serve --http: задайте RXMCP_HTTP_ADDR и RXMCP_HTTP_SECRET")
 	}
-	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log})
+	helpSrc, err := helpSource(cfg)
+	if err != nil {
+		return err
+	}
+	helpClient, err := newClient(cfg)
+	if err != nil {
+		return err
+	}
+	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: helpClient})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	mode := "read-only"
@@ -628,4 +643,91 @@ func query(args []string) error {
 	}
 	fmt.Println(string(data))
 	return nil
+}
+
+// helpSource описывает, где лежит индекс справки этого стенда и как её скачать.
+func helpSource(cfg *config.Config) (*server.HelpSource, error) {
+	cl, err := newClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := auth.EnsureDir()
+	if err != nil {
+		return nil, err
+	}
+	return &server.HelpSource{Path: help.Path(dir, cfg.URL), Base: cfg.HelpBase(), Fetch: cl.Abs}, nil
+}
+
+// docs работает со справкой стенда из командной строки: index, search, topic, status.
+func docs(args []string) error {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	hs, err := helpSource(cfg)
+	if err != nil {
+		return err
+	}
+	sub := "status"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "index":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		fmt.Fprintf(os.Stderr, "Скачиваю справку с %s\n", hs.Base)
+		start := time.Now()
+		ix, err := help.Crawl(ctx, hs.Fetch, hs.Base, 6, func(done, total int) {
+			if done%200 == 0 || done == total {
+				fmt.Fprintf(os.Stderr, "\r  %d из %d статей", done, total)
+			}
+		})
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return err
+		}
+		if err := ix.Save(hs.Path); err != nil {
+			return err
+		}
+		st, _ := os.Stat(hs.Path)
+		fmt.Printf("%s: %d статей за %s, индекс %s (%.1f МБ).\nПомощник найдёт справку сам, перезапускать его не нужно.\n",
+			ix.Product, len(ix.Topics), time.Since(start).Round(time.Second), hs.Path, float64(st.Size())/1e6)
+		return nil
+	case "status":
+		ix, err := help.Load(hs.Path)
+		if errors.Is(err, help.ErrNoIndex) {
+			fmt.Printf("Справка не скачана. Выполните: rxmcp docs index (источник %s)\n", hs.Base)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %d статей, скачана %s с %s\nФайл: %s\n", ix.Product, len(ix.Topics), ix.Built.Format("02.01.2006 15:04"), ix.Base, hs.Path)
+		return nil
+	case "search", "topic":
+		if len(args) < 2 {
+			return fmt.Errorf("rxmcp docs %s: что искать?", sub)
+		}
+		ix, err := help.Load(hs.Path)
+		if err != nil {
+			return fmt.Errorf("%w: выполните rxmcp docs index", err)
+		}
+		if sub == "topic" {
+			t := ix.Topic(args[1])
+			if t == nil {
+				return fmt.Errorf("статьи %q нет", args[1])
+			}
+			fmt.Printf("%s\n%s\n%s\n\n%s\n", t.Title, strings.Join(t.Crumbs, " > "), ix.URL(t), t.Text)
+			return nil
+		}
+		for i, h := range ix.Search(strings.Join(args[1:], " "), "", 8) {
+			fmt.Printf("%d. %s  [%s]\n   %s\n   %s\n", i+1, h.Topic.Title, h.Topic.File, strings.Join(h.Topic.Crumbs, " > "), h.Snippet)
+		}
+		return nil
+	}
+	return fmt.Errorf("rxmcp docs: неизвестная команда %q (есть index, search, topic, status)", sub)
 }
