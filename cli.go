@@ -100,6 +100,27 @@ func knownKey(k string) bool {
 
 // clipboard читает буфер обмена. Нужно ровно для одного случая: куку скопировали
 // в браузере, и вставлять её в терминал руками незачем.
+// cookieOrClipboard возвращает куку, введённую в строке, а при пустом вводе берёт её
+// из буфера обмена. Вставить куку в терминал часто нельзя: строка ввода в macOS и Linux
+// ограничена 1024 символами, а sungero_client длиннее. Содержимое буфера, не похожее
+// на куку (короткое или в несколько строк), отбрасывается.
+func cookieOrClipboard(line string) string {
+	if line = strings.TrimSpace(line); line != "" {
+		return line
+	}
+	c, err := clipboard()
+	if err != nil {
+		fmt.Println("Буфер обмена не прочитан:", err)
+		return ""
+	}
+	if len(c) < 100 || strings.ContainsAny(c, "\r\n") {
+		fmt.Println("В буфере обмена не кука: там короткий или многострочный текст.")
+		return ""
+	}
+	fmt.Printf("Взял куку из буфера обмена (%d символов).\n", len(c))
+	return c
+}
+
 func clipboard() (string, error) {
 	var try [][]string
 	switch runtime.GOOS {

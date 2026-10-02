@@ -232,11 +232,14 @@ func loginCookie(paste bool) error {
 		fmt.Println("Взял куку из буфера обмена.")
 	} else {
 		printCookieHelp(cfg.URL)
-		fmt.Print("Кука (или запустите rxmcp login --paste, чтобы взять из буфера обмена): ")
+		fmt.Print("Нажмите Enter, когда кука скопирована: ")
 		rd := bufio.NewReader(os.Stdin)
 		line, err = rd.ReadString('\n')
 		if err != nil && line == "" {
 			return err
+		}
+		if line = cookieOrClipboard(line); line == "" {
+			return errors.New("куки нет: скопируйте значение sungero_client и повторите rxmcp login")
 		}
 	}
 	if err := auth.SaveCookie(cfg.URL, line); err != nil {
