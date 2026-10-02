@@ -1,0 +1,66 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.drxinfra/rxmcp",
+  "title": "Directum RX",
+  "description": "Directum RX for AI assistants: assignments, documents, boards, projects, any entity, system help",
+  "websiteUrl": "https://drxinfra.ru/rxmcp",
+  "repository": {
+    "url": "https://github.com/drxinfra/rxmcp",
+    "source": "github"
+  },
+  "version": "0.5.1",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/drxinfra/rxmcp:v0.5.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "RXMCP_URL",
+          "description": "Directum RX integration service URL, for example https://rx.company.ru/Integration",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "RXMCP_LOGIN",
+          "description": "Your Directum RX login: the server finds your assignments by it",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "RXMCP_AUTH",
+          "description": "How to sign in: basic (login and password), cookie, oidc, bearer or header",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "basic"
+        },
+        {
+          "name": "RXMCP_PASSWORD",
+          "description": "Password for RXMCP_AUTH=basic",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "RXMCP_COOKIE",
+          "description": "Cookie header from the browser for RXMCP_AUTH=cookie (works with SSO and domain sign-in)",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "RXMCP_ALLOW_WRITE",
+          "description": "Set to 1 to enable write tools (tasks, assignments, board tickets). Read-only by default",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "RXMCP_TZ",
+          "description": "Time zone for dates, for example Europe/Moscow",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
