@@ -8,11 +8,11 @@
     "url": "https://github.com/drxinfra/rxmcp",
     "source": "github"
   },
-  "version": "0.5.1",
+  "version": "0.5.2",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/drxinfra/rxmcp:v0.5.1",
+      "identifier": "ghcr.io/drxinfra/rxmcp:v0.5.2",
       "transport": {
         "type": "stdio"
       },

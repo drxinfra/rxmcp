@@ -104,19 +104,43 @@ type emptyIn struct{}
 type myAssignmentsIn struct {
 	Status  string `json:"status,omitempty" jsonschema:"in_process (по умолчанию), overdue, unread, completed, all"`
 	Notices bool   `json:"notices,omitempty" jsonschema:"true = уведомления вместо заданий"`
-	Subject string `json:"subject,omitempty" jsonschema:"подстрока темы"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"сколько показать, по умолчанию 20, максимум 100"`
+	Subject string `json:"subject,omitempty" jsonschema:"подстрока темы задания, регистр не важен"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
-type idIn struct {
-	ID int64 `json:"id" jsonschema:"Id объекта в RX (число из #123)"`
+type assignmentIDIn struct {
+	ID int64 `json:"id" jsonschema:"Id задания или уведомления: число после # в строке rx_my_assignments"`
+}
+
+type taskIDIn struct {
+	ID int64 `json:"id" jsonschema:"Id задачи: число после «задача #» в rx_my_assignments или после # в rx_list_tasks"`
+}
+
+type documentIDIn struct {
+	ID int64 `json:"id" jsonschema:"Id документа: число после # в строке rx_find_documents"`
+}
+
+type abortTaskIn struct {
+	ID int64 `json:"id" jsonschema:"Id задачи, которую нужно прекратить; пользователь должен быть её автором"`
+}
+
+type boardIDIn struct {
+	ID int64 `json:"id" jsonschema:"Id доски: число после # в строке rx_boards"`
+}
+
+type ticketIDIn struct {
+	ID int64 `json:"id" jsonschema:"числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"`
+}
+
+type projectIDIn struct {
+	ID int64 `json:"id" jsonschema:"Id проекта: число после # в строке rx_projects"`
 }
 
 type listTasksIn struct {
 	Who     string `json:"who,omitempty" jsonschema:"mine (по умолчанию, я автор) или all"`
 	Status  string `json:"status,omitempty" jsonschema:"in_process (по умолчанию), completed, aborted, draft, all"`
 	Subject string `json:"subject,omitempty" jsonschema:"подстрока темы"`
-	Limit   int    `json:"limit,omitempty"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type findDocsIn struct {
@@ -128,7 +152,7 @@ type findDocsIn struct {
 	CreatedTo   string `json:"created_to,omitempty" jsonschema:"дата ГГГГ-ММ-ДД, создан не позже"`
 	State       string `json:"state,omitempty" jsonschema:"active, draft или obsolete (жизненный цикл)"`
 	AllTypes    bool   `json:"all_types,omitempty" jsonschema:"true = искать среди всех электронных документов, а не только официальных"`
-	Limit       int    `json:"limit,omitempty"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type docTextIn struct {
@@ -139,15 +163,15 @@ type docTextIn struct {
 }
 
 type findEmployeesIn struct {
-	Query           string `json:"query" jsonschema:"фамилия или часть имени"`
-	IncludeInactive bool   `json:"include_inactive,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `json:"query" jsonschema:"фамилия или часть имени, например Петров или Анна; регистр не важен"`
+	IncludeInactive bool   `json:"include_inactive,omitempty" jsonschema:"true = включая закрытые записи сотрудников (уволенные); по умолчанию только действующие"`
+	Limit           int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 func (s *Server) registerRead() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_whoami",
-		Description: "Кто текущий пользователь в Directum RX: имя, Id, должность, подразделение. Вызывайте первым, если контекст пользователя неизвестен.",
+		Description: "Кто текущий пользователь в Directum RX: имя, Id, должность, подразделение. Вызывайте первым, если неизвестно, от чьего имени идёт работа. Параметров нет, ничего не меняет.",
 		Annotations: ro("Кто я в RX"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyIn) (*mcp.CallToolResult, any, error) {
 		me, err := s.svc.WhoAmI(ctx)
@@ -158,10 +182,8 @@ func (s *Server) registerRead() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_my_assignments",
-		Description: "Мои задания в Directum RX. По умолчанию те, что в работе, отсортированы по сроку. " +
-			"status=overdue только просроченные, unread непрочитанные, completed выполненные, all все. notices=true покажет уведомления. " +
-			"Строка: #Id ● тема [важно] · срок · от кого · задача #Id. ● значит не прочитано.",
+		Name:        "rx_my_assignments",
+		Description: "Мои входящие задания в Directum RX. Используйте для вопросов «что у меня в работе», «что просрочено», «что нового». По умолчанию задания в работе, отсортированные по сроку; status=overdue только просроченные, unread непрочитанные, completed выполненные, all все; notices=true покажет уведомления. Строка: #Id ● тема [важно] · срок · от кого · задача #Id, где ● значит не прочитано. Показывает только задания текущего пользователя. Задачи, которые отправил я сам, ищите через rx_list_tasks; подробности задания через rx_get_assignment.",
 		Annotations: ro("Мои задания"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in myAssignmentsIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: in.Status, Notices: in.Notices, Subject: in.Subject, Limit: in.Limit})
@@ -177,9 +199,9 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_get_assignment",
-		Description: "Задание или уведомление целиком: тема, автор, срок, задача, вложенные документы, вся переписка по нитке. Нужен Id задания.",
+		Description: "Одно задание или уведомление целиком: тема, автор, срок, задача, вложенные документы и вся переписка по нитке. Используйте, чтобы понять, что именно требуется от пользователя. Id берётся из rx_my_assignments. Ход всей задачи с остальными исполнителями показывает rx_get_task. Только чтение.",
 		Annotations: ro("Открыть задание"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in assignmentIDIn) (*mcp.CallToolResult, any, error) {
 		a, att, err := s.svc.GetAssignment(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -189,9 +211,9 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_get_task",
-		Description: "Задача целиком: статус, автор, сроки, вложения, переписка и список заданий по ней с исполнителями и результатами. Нужен Id задачи.",
+		Description: "Задача целиком: статус, автор, сроки, вложения, переписка и все задания по ней с исполнителями и результатами. Используйте, когда нужен ход работы по задаче: кто что сделал и на ком она стоит. Id задачи есть в строках rx_my_assignments и rx_list_tasks. Для одного своего задания достаточно rx_get_assignment. Только чтение.",
 		Annotations: ro("Открыть задачу"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskIDIn) (*mcp.CallToolResult, any, error) {
 		t, att, jobs, err := s.svc.GetTask(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -201,7 +223,7 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_list_tasks",
-		Description: "Задачи, которые я отправил (who=mine, по умолчанию) или все доступные (who=all). Фильтр по статусу и подстроке темы. Что происходит с задачей: rx_get_task.",
+		Description: "Исходящие задачи: те, что отправил я (who=mine, по умолчанию), или все доступные (who=all). Используйте для вопроса «что я поручил и в каком это состоянии». Фильтры по статусу и подстроке темы. Строка: #Id тема · статус · автор · дата создания · срок. Свои входящие задания показывает rx_my_assignments, подробности одной задачи rx_get_task.",
 		Annotations: ro("Мои задачи"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listTasksIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.ListTasks(ctx, rx.TaskFilter{Who: in.Who, Status: in.Status, Subject: in.Subject, Limit: in.Limit})
@@ -225,10 +247,8 @@ func (s *Server) registerRead() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_find_documents",
-		Description: "Поиск документов в Directum RX по названию, виду, автору, регистрационному номеру, датам создания и состоянию. " +
-			"Ищет среди официальных документов (договоры, письма, записки, приказы); all_types=true ищет среди всех, включая простые документы без регистрации. " +
-			"Нужно хотя бы одно условие. Результат: #Id название · вид · номер · состояние · автор · дата.",
+		Name:        "rx_find_documents",
+		Description: "Поиск документов в Directum RX по карточке: название, вид, автор, регистрационный номер, даты создания, состояние. По содержимому не ищет. По умолчанию среди официальных документов (договоры, письма, записки, приказы); all_types=true добавляет простые документы без регистрации. Нужно хотя бы одно условие. Строка: #Id название · вид · номер · состояние · автор · дата. Дальше rx_get_document для карточки и rx_get_document_text для текста. Справочники и другие сущности ищите через rx_find_entity.",
 		Annotations: ro("Найти документы"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in findDocsIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.FindDocuments(ctx, rx.DocumentFilter{
@@ -257,9 +277,9 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_get_document",
-		Description: "Карточка документа: вид, регистрация, состояния (жизненный цикл, согласование, исполнение), автор, подразделение, список версий с Id. Текст не включает, для текста rx_get_document_text.",
+		Description: "Карточка документа: вид, регистрация, состояния (жизненный цикл, согласование, исполнение), автор, подразделение и список версий с Id. Используйте, чтобы узнать статус документа или Id нужной версии. Id документа берётся из rx_find_documents. Текста не содержит, текст отдаёт rx_get_document_text. Только чтение.",
 		Annotations: ro("Карточка документа"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in documentIDIn) (*mcp.CallToolResult, any, error) {
 		d, err := s.svc.GetDocument(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -268,9 +288,8 @@ func (s *Server) registerRead() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_get_document_text",
-		Description: "Текст версии документа (по умолчанию последней). Понимает docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf. " +
-			"PDF и сканы не читает. Длинный текст обрезается по max_chars, продолжение через offset.",
+		Name:        "rx_get_document_text",
+		Description: "Текст версии документа, по умолчанию последней. Используйте, чтобы пересказать документ или найти в нём условия, суммы, сроки. Читает docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf; PDF и сканы не читает и сообщит об этом. Длинный текст обрезается по max_chars, продолжение запрашивается через offset. Id документа берётся из rx_find_documents. Только чтение.",
 		Annotations: ro("Текст документа"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in docTextIn) (*mcp.CallToolResult, any, error) {
 		d, err := s.svc.GetDocument(ctx, in.ID)
@@ -309,7 +328,7 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_find_employees",
-		Description: "Найти сотрудников по фамилии или части имени: Id, должность, подразделение, почта. Id нужен, чтобы адресовать задачу.",
+		Description: "Найти сотрудников по фамилии или части имени: Id, должность, подразделение, почта. Используйте перед rx_create_simple_task, чтобы получить Id исполнителя, или чтобы узнать, кто есть кто. По умолчанию только действующие сотрудники; include_inactive=true добавляет закрытые записи. Только чтение.",
 		Annotations: ro("Найти сотрудника"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in findEmployeesIn) (*mcp.CallToolResult, any, error) {
 		items, err := s.svc.FindEmployees(ctx, in.Query, in.IncludeInactive, in.Limit)
@@ -347,7 +366,7 @@ type createTaskIn struct {
 	Subject      string  `json:"subject" jsonschema:"тема задачи"`
 	Text         string  `json:"text,omitempty" jsonschema:"текст задачи"`
 	PerformerIDs []int64 `json:"performer_ids" jsonschema:"Id исполнителей (rx_find_employees)"`
-	ObserverIDs  []int64 `json:"observer_ids,omitempty"`
+	ObserverIDs  []int64 `json:"observer_ids,omitempty" jsonschema:"Id наблюдателей (rx_find_employees): они видят задачу, но заданий не получают"`
 	DocumentIDs  []int64 `json:"document_ids,omitempty" jsonschema:"Id вложенных документов"`
 	Deadline     string  `json:"deadline" jsonschema:"срок, обязателен: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (дата без времени = 18:00)"`
 	Importance   string  `json:"importance,omitempty" jsonschema:"low, normal (по умолчанию), high"`
@@ -358,7 +377,7 @@ type createTaskIn struct {
 func (s *Server) registerWrite() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_complete_assignment",
-		Description: "Выполнить задание в Directum RX от имени пользователя: простое задание завершить, приёмку принять (result=Accepted) или вернуть на доработку (result=ForRework). Без result берётся стандартный вариант для типа задания. Перед вызовом перескажите пользователю, что будет сделано.",
+		Description: "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять (result=Accepted) или вернуть на доработку (result=ForRework). Без result берётся стандартный результат для типа задания. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано.",
 		Annotations: rw("Выполнить задание", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in completeIn) (*mcp.CallToolResult, any, error) {
 		a, _, err := s.svc.GetAssignment(ctx, in.ID)
@@ -385,7 +404,7 @@ func (s *Server) registerWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_create_simple_task",
-		Description: "Создать и отправить простую задачу исполнителям. Нужны тема и Id исполнителей. Перед вызовом перескажите пользователю тему, исполнителей и срок.",
+		Description: "Создать простую задачу и сразу отправить её исполнителям: они получат задания. Нужны тема, срок и Id исполнителей из rx_find_employees. draft=true оставит черновик без отправки, notice=true отправит уведомление без ожидания выполнения. Меняет данные в RX. Для карточки на agile-доске используйте rx_create_ticket. Перед вызовом перескажите пользователю тему, исполнителей и срок.",
 		Annotations: rw("Создать задачу", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createTaskIn) (*mcp.CallToolResult, any, error) {
 		var dl *time.Time
@@ -423,9 +442,9 @@ func (s *Server) registerWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_abort_task",
-		Description: "Прекратить задачу (все задания по ней закрываются). Необратимо. Только для задач, где пользователь автор.",
+		Description: "Прекратить задачу: все незавершённые задания по ней закрываются. Необратимо. Работает только для задач, где пользователь автор, иначе RX вернёт отказ. Сначала проверьте задачу через rx_get_task и подтвердите у пользователя, что прекращать нужно именно её.",
 		Annotations: rw("Прекратить задачу", true),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in abortTaskIn) (*mcp.CallToolResult, any, error) {
 		t, _, _, err := s.svc.GetTask(ctx, in.ID)
 		if err != nil {
 			return fail(err)

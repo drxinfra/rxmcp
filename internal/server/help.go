@@ -106,10 +106,8 @@ func (s *Server) registerHelp() {
 	h := &helpState{src: *s.opt.Help}
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_help_search",
-		Description: "Поиск по справке Directum RX этого стенда: как устроен механизм, как что-то настроить, что значит поле или статус. " +
-			"Справка той же версии, что и система пользователя. Ищет по словам с учётом окончаний; если мало результатов, переформулируйте запрос терминами системы. " +
-			"Возвращает статьи с фрагментом, полный текст открывается через rx_help_topic.",
+		Name:        "rx_help_search",
+		Description: "Поиск по справке Directum RX той же версии, что стенд пользователя. Используйте для вопросов о самой системе: как устроен механизм, как что-то настроить, что значит поле или статус. Ищет по словам с учётом окончаний; если результатов мало, переформулируйте запрос терминами системы. Возвращает статьи с фрагментом и именем файла, полный текст открывает rx_help_topic. Правила и инструкции компании лежат не здесь, а в rx_kb_search. Справка хранится локально; при первом вызове она скачивается со стенда, и тогда запрос нужно повторить через несколько минут.",
 		Annotations: ro("Поиск по справке"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in helpSearchIn) (*mcp.CallToolResult, any, error) {
 		ix, msg := h.index()
@@ -144,9 +142,8 @@ func (s *Server) registerHelp() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_help_topic",
-		Description: "Полный текст статьи справки Directum RX по имени файла. Ссылки в тексте вида [текст](файл.htm) ведут на другие статьи: " +
-			"их можно открыть этим же инструментом, если там описан упомянутый механизм.",
+		Name:        "rx_help_topic",
+		Description: "Полный текст статьи справки Directum RX по имени файла из rx_help_search или rx_help_toc. Ссылки в тексте вида [текст](файл.htm) ведут на другие статьи: откройте их этим же инструментом, если там описан нужный механизм. Длинная статья обрезается по max_chars, продолжение через offset. Только чтение.",
 		Annotations: ro("Статья справки"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in helpTopicIn) (*mcp.CallToolResult, any, error) {
 		ix, msg := h.index()
@@ -182,7 +179,7 @@ func (s *Server) registerHelp() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_help_toc",
-		Description: "Оглавление справки Directum RX: разделы верхнего уровня или содержимое раздела. Помогает понять, где искать, когда поиск по словам не даёт нужного.",
+		Description: "Оглавление справки Directum RX: разделы верхнего уровня или содержимое раздела с именами файлов статей. Используйте, когда rx_help_search не находит нужное и надо понять, в каком разделе искать, или чтобы показать, что вообще есть в справке. Только чтение.",
 		Annotations: ro("Оглавление справки"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in helpTocIn) (*mcp.CallToolResult, any, error) {
 		ix, msg := h.index()

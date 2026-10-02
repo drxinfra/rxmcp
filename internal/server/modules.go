@@ -23,26 +23,26 @@ type kbSearchIn struct {
 	Tag    string `json:"tag,omitempty" jsonschema:"подстрока тега"`
 	Author string `json:"author,omitempty" jsonschema:"подстрока имени автора"`
 	All    bool   `json:"include_drafts,omitempty" jsonschema:"true = включая черновики и устаревшие"`
-	Limit  int    `json:"limit,omitempty"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type kbArticleIn struct {
 	ID       int64 `json:"id" jsonschema:"Id статьи"`
-	MaxChars int   `json:"max_chars,omitempty"`
-	Offset   int   `json:"offset,omitempty"`
+	MaxChars int   `json:"max_chars,omitempty" jsonschema:"лимит символов текста, по умолчанию из настроек сервера (20000)"`
+	Offset   int   `json:"offset,omitempty" jsonschema:"с какого символа продолжить, если статья была обрезана"`
 }
 
 type boardsIn struct {
 	Query string `json:"query,omitempty" jsonschema:"подстрока названия или префикс доски"`
-	All   bool   `json:"include_closed,omitempty"`
-	Limit int    `json:"limit,omitempty"`
+	All   bool   `json:"include_closed,omitempty" jsonschema:"true = включая закрытые доски; по умолчанию только открытые"`
+	Limit int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type ticketsIn struct {
 	Query   string `json:"query,omitempty" jsonschema:"подстрока названия или код карточки вида ABC-12"`
-	BoardID int64  `json:"board_id,omitempty"`
+	BoardID int64  `json:"board_id,omitempty" jsonschema:"Id доски из rx_boards, чтобы искать только на ней; без него поиск по всем доскам"`
 	Status  string `json:"status,omitempty" jsonschema:"active (по умолчанию), closed, all"`
-	Limit   int    `json:"limit,omitempty"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type projectsIn struct {
@@ -50,14 +50,14 @@ type projectsIn struct {
 	Manager string `json:"manager,omitempty" jsonschema:"подстрока имени руководителя"`
 	Stage   string `json:"stage,omitempty" jsonschema:"Initiation, Planning, Execution, Closing"`
 	Mine    bool   `json:"mine,omitempty" jsonschema:"true = только где я руководитель, администратор или в команде"`
-	All     bool   `json:"include_closed,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	All     bool   `json:"include_closed,omitempty" jsonschema:"true = включая закрытые проекты; по умолчанию только открытые"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type plansIn struct {
 	Query     string `json:"query,omitempty" jsonschema:"подстрока названия плана"`
-	ProjectID int64  `json:"project_id,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
+	ProjectID int64  `json:"project_id,omitempty" jsonschema:"Id проекта из rx_projects, чтобы показать только его планы"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
 }
 
 type planIn struct {
@@ -69,7 +69,7 @@ func (s *Server) registerModules() {
 	// База знаний
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_kb_areas",
-		Description: "Области базы знаний Directum RX (модуль «Знания»): Id, название, стартовая статья. С Id области можно искать статьи.",
+		Description: "Области базы знаний компании в Directum RX (модуль «Знания»): Id, название, стартовая статья. Используйте, чтобы узнать, какие разделы знаний есть, и сузить rx_kb_search по area_id. Это внутренние статьи компании; вопросы о работе самой системы задавайте rx_help_search. Только чтение.",
 		Annotations: ro("Области знаний"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in kbAreasIn) (*mcp.CallToolResult, any, error) {
 		items, err := s.svc.KBAreas(ctx, in.Query)
@@ -80,7 +80,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_kb_search",
-		Description: "Поиск статей базы знаний по названию, области, тегу или автору. Возвращает Id, название, области, автора, дату. Текст статьи: rx_kb_article.",
+		Description: "Поиск статей базы знаний компании по названию, области, тегу или автору. По тексту статей не ищет. Используйте для вопросов о правилах и инструкциях компании: «как оформить командировку», «регламент закупок». Строка: #Id название · области · автор · дата изменения. Текст статьи отдаёт rx_kb_article. Как устроена сама система, ищите в rx_help_search.",
 		Annotations: ro("Поиск статей"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in kbSearchIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.KBFindArticles(ctx, rx.ArticleFilter{Query: in.Query, AreaID: in.AreaID, Tag: in.Tag, Author: in.Author, AllStat: in.All, Limit: in.Limit})
@@ -105,7 +105,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_kb_article",
-		Description: "Статья базы знаний целиком: области, теги, автор и текст в markdown. Длинный текст обрезается по max_chars, продолжение через offset.",
+		Description: "Статья базы знаний компании целиком: области, теги, автор и текст в markdown. Id берётся из rx_kb_search или из стартовой статьи области в rx_kb_areas. Длинный текст обрезается по max_chars, продолжение запрашивается через offset. Только чтение.",
 		Annotations: ro("Статья"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in kbArticleIn) (*mcp.CallToolResult, any, error) {
 		a, body, err := s.svc.KBArticle(ctx, in.ID)
@@ -127,7 +127,7 @@ func (s *Server) registerModules() {
 	// Agile-доски
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_boards",
-		Description: "Agile-доски Directum RX: Id, название, префикс карточек, владелец, проект. Содержимое доски: rx_board.",
+		Description: "Список agile-досок Directum RX: Id, название, префикс карточек, владелец, проект. Используйте, чтобы найти доску и её Id перед rx_board, rx_tickets или rx_create_ticket. По умолчанию только открытые доски, до 20 строк; include_closed=true добавляет закрытые. Содержимое доски показывает rx_board. Только чтение.",
 		Annotations: ro("Доски"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in boardsIn) (*mcp.CallToolResult, any, error) {
 		items, err := s.svc.Boards(ctx, in.Query, in.All, in.Limit)
@@ -147,9 +147,9 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_board",
-		Description: "Доска целиком: колонки по порядку и карточки в них с исполнителями и сроками. Нужен Id доски.",
+		Description: "Одна agile-доска целиком: колонки слева направо и карточки в них с кодом, исполнителями и сроками. Используйте для вопроса «что сейчас в работе на доске». Id доски берётся из rx_boards. Если доска неизвестна или нужна карточка по названию, используйте rx_tickets. Только чтение.",
 		Annotations: ro("Доска"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in boardIDIn) (*mcp.CallToolResult, any, error) {
 		bd, cols, err := s.svc.BoardByID(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -158,7 +158,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_tickets",
-		Description: "Поиск карточек на agile-досках по названию или коду (например ABC-12), по доске и статусу. Карточка целиком: rx_ticket.",
+		Description: "Поиск карточек на agile-досках по названию или коду вида ABC-12, с фильтром по доске и статусу. Используйте, когда доска неизвестна или нужна конкретная карточка. Строка: код (id N) название · исполнители · срок, где N это числовой Id для rx_ticket и rx_update_ticket. По умолчанию только активные карточки. Карточку целиком показывает rx_ticket, всю доску rx_board.",
 		Annotations: ro("Поиск карточек"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketsIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.FindTickets(ctx, in.Query, in.BoardID, in.Status, in.Limit)
@@ -181,9 +181,9 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket",
-		Description: "Карточка agile-доски целиком: статус, исполнители, сроки, трудоёмкость, теги, вложения, описание. Нужен Id карточки (число, не код).",
+		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket.",
 		Annotations: ro("Карточка"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketIDIn) (*mcp.CallToolResult, any, error) {
 		t, err := s.svc.TicketByID(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -194,7 +194,7 @@ func (s *Server) registerModules() {
 	// Проекты и планы
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_projects",
-		Description: "Проекты и инициативы Directum RX: стадия, состояние, руководитель, сроки, процент. mine=true покажет только мои. Карточка: rx_project.",
+		Description: "Проекты и инициативы Directum RX: стадия, состояние, руководитель, сроки, процент выполнения. Используйте для обзора «какие проекты идут» и чтобы найти Id проекта. mine=true оставит проекты, где пользователь руководитель, администратор или в команде. По умолчанию только открытые, до 20 строк. Карточку проекта показывает rx_project.",
 		Annotations: ro("Проекты"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectsIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.Projects(ctx, rx.ProjectFilter{Query: in.Query, Manager: in.Manager, Stage: in.Stage, Member: in.Mine, All: in.All, Limit: in.Limit})
@@ -218,9 +218,9 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_project",
-		Description: "Карточка проекта: стадия, сроки план и факт, руководитель, заказчик, команда по группам, гейты, описание и список планов проекта.",
+		Description: "Карточка проекта: стадия, плановые и фактические сроки, руководитель, заказчик, команда по группам, гейты, описание и список планов с их Id. Используйте для вопроса «в каком состоянии проект и кто в нём участвует». Id проекта берётся из rx_projects. Дерево работ показывает rx_project_plan. Только чтение.",
 		Annotations: ro("Проект"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectIDIn) (*mcp.CallToolResult, any, error) {
 		p, plans, err := s.svc.ProjectByID(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -229,7 +229,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_project_plans",
-		Description: "Поиск планов проектов по названию или Id проекта. Работы плана: rx_project_plan.",
+		Description: "Поиск планов проектов по названию или по Id проекта. Строка: #Id название · состояние · проект · сроки · процент. Используйте, чтобы найти Id плана перед rx_project_plan, когда проект неизвестен; планы одного проекта уже перечислены в rx_project. Только чтение.",
 		Annotations: ro("Планы проектов"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in plansIn) (*mcp.CallToolResult, any, error) {
 		items, total, err := s.svc.FindPlans(ctx, in.Query, in.ProjectID, in.Limit)
@@ -253,7 +253,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_project_plan",
-		Description: "План проекта с деревом работ: разделы, работы, вехи, сроки, ответственные, проценты, просрочки. Нужен Id плана (документа).",
+		Description: "План проекта с деревом работ: разделы, работы, вехи, сроки, ответственные, проценты и просрочки. Используйте для вопросов «как идёт проект», «что отстаёт», «кто за что отвечает». Нужен Id плана (документа) из rx_project или rx_project_plans, а не Id проекта. Большой план обрезается по max_rows. Только чтение.",
 		Annotations: ro("План проекта"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in planIn) (*mcp.CallToolResult, any, error) {
 		p, m, names, err := s.svc.PlanByID(ctx, in.ID)
@@ -283,8 +283,8 @@ type createTicketIn struct {
 
 type updateTicketIn struct {
 	ID          int64    `json:"id" jsonschema:"Id карточки (число из rx_tickets, не код вида ABC-12)"`
-	Name        string   `json:"name,omitempty"`
-	Description string   `json:"description,omitempty"`
+	Name        string   `json:"name,omitempty" jsonschema:"новое название; не передавайте, если менять не нужно"`
+	Description string   `json:"description,omitempty" jsonschema:"новое описание целиком; не передавайте, если менять не нужно"`
 	Deadline    string   `json:"deadline,omitempty" jsonschema:"новый срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"`
 	Priority    int      `json:"priority,omitempty" jsonschema:"приоритет 1..10"`
 	Performers  []string `json:"performers,omitempty" jsonschema:"добавить исполнителей: фамилии или Id"`
@@ -332,9 +332,8 @@ func ticketLabels(ts []rx.Ticket, max int) string {
 
 func (s *Server) registerBoardWrite() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_create_column",
-		Description: "Создать колонку на agile-доске Directum RX: название, место на доске, финальная или нет, лимит карточек. " +
-			"Без position колонка встаёт перед финальной («Выполнено»). Перед вызовом перескажите пользователю доску, название и место.",
+		Name:        "rx_create_column",
+		Description: "Создать колонку на agile-доске: название, место, финальная или нет, лимит карточек. Без position колонка встаёт перед финальной («Выполнено»). Меняет доску сразу, удалить колонку этим сервером нельзя. Доску можно назвать словами или передать Id из rx_boards. Перед вызовом перескажите пользователю доску, название и место.",
 		Annotations: rw("Создать колонку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createColumnIn) (*mcp.CallToolResult, any, error) {
 		msg := fmt.Sprintf("Создать колонку «%s» на доске %s", in.Name, in.Board)
@@ -365,9 +364,8 @@ func (s *Server) registerBoardWrite() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_delete_tickets",
-		Description: "Удалить карточки с agile-доски, как удаление в интерфейсе доски: карточка уходит с доски и получает статус Deleted. Вернуть её этим сервером нельзя. " +
-			"Нужны Id карточек (числа, не коды). Перед вызовом перечислите пользователю, какие карточки будут удалены.",
+		Name:        "rx_delete_tickets",
+		Description: "Удалить карточки с agile-доски так же, как это делает кнопка удаления в интерфейсе: карточка уходит с доски и получает статус Deleted. Вернуть её этим сервером нельзя. Нужны числовые Id карточек из rx_board или rx_tickets, не коды; до 100 за вызов. Перед вызовом перечислите пользователю, какие карточки будут удалены.",
 		Annotations: rw("Удалить карточки с доски", true),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in deleteTicketsIn) (*mcp.CallToolResult, any, error) {
 		if len(in.IDs) > maxDeleteTickets {
@@ -408,10 +406,8 @@ func (s *Server) registerBoardWrite() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_create_ticket",
-		Description: "Создать карточку на agile-доске Directum RX. Доску, колонку, исполнителей и теги можно называть словами, " +
-			"они будут сопоставлены сами. Теги должны уже существовать на доске, новые этот интерфейс не заводит. " +
-			"Перед вызовом перескажите пользователю доску, колонку, название и срок.",
+		Name:        "rx_create_ticket",
+		Description: "Создать карточку на agile-доске. Доску, колонку, исполнителей и теги можно называть словами, сервер сопоставит их сам; теги должны уже существовать на доске. Без column карточка попадает в первую колонку. Меняет данные сразу. Для поручения с контролем срока в самой системе используйте rx_create_simple_task. Перед вызовом перескажите пользователю доску, колонку, название и срок.",
 		Annotations: rw("Создать карточку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createTicketIn) (*mcp.CallToolResult, any, error) {
 		var dl *time.Time
@@ -454,9 +450,8 @@ func (s *Server) registerBoardWrite() {
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
-		Name: "rx_update_ticket",
-		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, а также добавить исполнителей и теги " +
-			"или перенести карточку в другую колонку. Переданные поля меняются, остальные остаются как были.",
+		Name:        "rx_update_ticket",
+		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, добавить исполнителей и теги или перенести в другую колонку. Меняются только переданные поля, остальные остаются. Убрать исполнителя или тег этим инструментом нельзя. Нужен числовой Id карточки из rx_tickets или rx_board. Меняет данные сразу.",
 		Annotations: rw("Изменить карточку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in updateTicketIn) (*mcp.CallToolResult, any, error) {
 		cur, err := s.svc.TicketByID(ctx, in.ID)
