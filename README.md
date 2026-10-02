@@ -1,4 +1,6 @@
-# rxmcp
+# rxmcp: Directum RX MCP server
+
+**Directum RX MCP server.** Connects an AI assistant (Claude, Cursor and any MCP host) to Directum RX: assignments, tasks, documents and their text, knowledge base, agile boards, project plans, any entity via OData, and search over the system help of your own RX version. Single binary, read-only by default. The rest of this page is in Russian; the tool list and settings are in [server.json](server.json).
 
 MCP-сервер для Directum RX. Подключает ИИ-ассистента (Claude Desktop, Claude Code, Cursor и любой другой хост с поддержкой [Model Context Protocol](https://modelcontextprotocol.io)) к вашей системе: задания, задачи, документы, база знаний, agile-доски, проекты и планы.
 
