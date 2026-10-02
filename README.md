@@ -120,6 +120,8 @@ docker run --rm -p 127.0.0.1:8765:8765 \
 
 Сервер опубликован в официальном [MCP Registry](https://registry.modelcontextprotocol.io) под именем `io.github.drxinfra/rxmcp`. Запись обновляется автоматически при каждом релизе: описание лежит в `server.json`, образ в `ghcr.io/drxinfra/rxmcp`.
 
+В каталоге [LobeHub](https://lobehub.com/mcp/drxinfra-rxmcp) сервер называется `drxinfra-rxmcp`. Его описание лежит в `lhm.plugin.json` и обновляется вручную: `npx -y @lobehub/market-cli plugin update --dir .` после смены версии в файле.
+
 ## Безопасность
 
 - Только сервис интеграции RX и только права вашего пользователя. Ни базы, ни файлов, ни логов системы.
