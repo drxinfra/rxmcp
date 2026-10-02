@@ -239,9 +239,6 @@ func loginCookie(paste bool) error {
 			return err
 		}
 	}
-	if !strings.Contains(line, "=") {
-		line = "sungero_client=" + strings.TrimSpace(line)
-	}
 	if err := auth.SaveCookie(cfg.URL, line); err != nil {
 		return err
 	}

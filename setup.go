@@ -273,7 +273,7 @@ func printCookieHelp(rxURL string) {
 	fmt.Println("Где взять куку (делается один раз, потом обновлять командой rxmcp login):")
 	fmt.Println("  1. Откройте", host, "и войдите как обычно.")
 	fmt.Println("  2. F12 → Application (в Firefox Хранилище) → Cookies → выберите адрес.")
-	fmt.Println("  3. Скопируйте значение sungero_client и вставьте сюда.")
+	fmt.Println("  3. Скопируйте значение sungero_client и вставьте сюда: одно значение или строку sungero_client=... целиком.")
 }
 
 // registerClients прописывает сервер в MCP-клиенты. В запись клиента идёт только путь

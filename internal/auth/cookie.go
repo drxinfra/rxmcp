@@ -32,14 +32,23 @@ func SaveCookie(rxURL, cookie string) error {
 	// Из браузера часто копируют с префиксом «Cookie:» — убираем.
 	cookie = strings.TrimPrefix(cookie, "Cookie:")
 	cookie = strings.TrimSpace(cookie)
-	if !strings.Contains(cookie, "=") {
-		return errors.New("это не похоже на куку: нет знака равенства. Нужна строка вида sungero_client=...")
-	}
+	cookie = withName(cookie)
 	f := CookieFile(rxURL)
 	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
 		return err
 	}
 	return os.WriteFile(f, []byte(cookie+"\n"), 0o600)
+}
+
+// withName дописывает имя куки, если вставлено одно значение. Проверять по знаку равенства
+// нельзя: значение sungero_client это base64, и оно само часто кончается на «=».
+// Голым значением считаем строку, где после первого «=» нет ничего, кроме таких же знаков.
+func withName(cookie string) string {
+	i := strings.Index(cookie, "=")
+	if i > 0 && strings.Trim(cookie[i:], "=") != "" {
+		return cookie
+	}
+	return "sungero_client=" + cookie
 }
 
 // LoadCookie читает сохранённую куку.
