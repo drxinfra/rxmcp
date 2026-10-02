@@ -1172,7 +1172,7 @@
   "version": "0.5.2",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
-  "icon": "📋",
+  "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",
   "tags": [
     "directum",
     "directum-rx",
