@@ -243,7 +243,7 @@ func (f *fakeRX) modules(w http.ResponseWriter, r *http.Request, p, filter strin
 			map[string]any{"Id": 10, "Name": "Новые", "IsFinal": false, "Status": "Active", "Tickets": []any{map[string]any{"Id": 903, "Position": 1, "Ticket": map[string]any{"Id": 250, "Name": "Дубль", "Uid": "DK-5", "Status": "Active"}}, map[string]any{"Id": 904, "Position": 0, "Ticket": map[string]any{"Id": 250, "Name": "Дубль", "Uid": "DK-5", "Status": "Active"}}}},
 		))
 	case p == "ITickets(245)":
-		jsonOut(w, map[string]any{"Id": 245, "Name": "Задача 2", "Uid": "DK-3", "Status": "Active", "Priority": 8, "BoardId": 2, "CreateDate": "2026-05-12T10:00:00+03:00", "Deadline": "2099-01-01T00:00:00Z", "Laboriousness": 4.5, "Description": "Сделать хорошо",
+		jsonOut(w, map[string]any{"Id": 245, "Name": "Задача 2", "Uid": "DK-3", "Status": "Active", "Priority": 8, "BoardId": 2, "CreateDate": "2026-05-12T10:00:00+03:00", "Deadline": "2099-01-01T00:00:00Z", "Laboriousness": 4.5, "ElapsedTime": 2.25, "Description": "Сделать хорошо",
 			"Performers": []any{map[string]any{"Performer": map[string]any{"Id": 7, "Name": "Иванов Иван"}}}, "TicketsTags": []any{map[string]any{"TicketTag": map[string]any{"Id": 1, "Name": "bug"}}},
 			"Attachments": []any{map[string]any{"Name": "Задача З-20", "Url": "https://rx.example.test/Sungero?type=abc&id=20"}}})
 	case p == "ITickets":

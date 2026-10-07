@@ -270,3 +270,54 @@ func TestTicketAttachments(t *testing.T) {
 		}
 	}
 }
+
+// SaveTicket перезаписывает план, факт, название, приоритет и срок тем, что
+// пришло в запросе. Обновление, которое их не передало, обнуляло часы карточки.
+// Позиция 0 поднимала карточку в начало колонки даже без переноса.
+func TestUpdateTicketKeepsHoursAndPlace(t *testing.T) {
+	ctx := context.Background()
+	lastSave := func(f *fakeRX) map[string]any {
+		var save map[string]any
+		for _, a := range agileActions(f) {
+			if a["_action"] == "AgileBoards/SaveTicket" {
+				save = a
+			}
+		}
+		if save == nil {
+			t.Fatal("SaveTicket не вызван")
+		}
+		return save["ticketReference"].(map[string]any)
+	}
+
+	f := newFake(t)
+	s := newSvc(t, f)
+	if _, _, err := s.UpdateTicket(ctx, 245, rx.TicketInput{Tags: []string{"7"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	ref := lastSave(f)
+	tk := ref["Ticket"].(map[string]any)
+	if tk["PlannedWorkload"] != 4.5 || tk["ActualWorkload"] != 2.25 {
+		t.Errorf("план и факт должны уйти текущими: %v / %v", tk["PlannedWorkload"], tk["ActualWorkload"])
+	}
+	if tk["Name"] != "Задача 2" || tk["Priority"] != float64(8) || tk["Deadline"] == nil {
+		t.Errorf("название, приоритет и срок должны уйти текущими: %v", tk)
+	}
+	if ref["Position"] != float64(-1) || ref["ColumnId"] != float64(11) {
+		t.Errorf("без переноса место не задаётся: %v", ref)
+	}
+
+	f = newFake(t)
+	s = newSvc(t, f)
+	plan := 8.0
+	if _, _, err := s.UpdateTicket(ctx, 245, rx.TicketInput{PlanHours: &plan}, "Новые"); err != nil {
+		t.Fatal(err)
+	}
+	ref = lastSave(f)
+	tk = ref["Ticket"].(map[string]any)
+	if tk["PlannedWorkload"] != 8.0 || tk["ActualWorkload"] != 2.25 {
+		t.Errorf("план меняется, факт остаётся: %v / %v", tk["PlannedWorkload"], tk["ActualWorkload"])
+	}
+	if ref["Position"] != float64(0) || ref["ColumnId"] != float64(10) {
+		t.Errorf("перенос ставит в начало новой колонки: %v", ref)
+	}
+}

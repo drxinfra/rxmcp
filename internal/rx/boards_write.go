@@ -19,7 +19,13 @@ import (
 //     нужен Id = -1, ноль означает «найди существующую» и даёт ошибку;
 //   - теги и исполнители передаются списком ссылок со State = "Added";
 //   - при обновлении карточка перезаписывается целиком, поэтому сначала
-//     читаем текущую и меняем только затронутые поля.
+//     читаем текущую и меняем только затронутые поля. Название, приоритет, срок,
+//     план (PlannedWorkload) и факт (ActualWorkload) сервер берёт из запроса
+//     всегда: не переданное поле обнуляется (ApplyTicketChanges в AgileBoards);
+//   - Position в ссылке сервер выполняет как перестановку: 0 поднимает карточку
+//     в начало колонки, -1 означает «место не задано» и оставляет её где была.
+
+const keepPosition = -1
 
 const newID = -1
 
@@ -52,6 +58,8 @@ type ticketWire struct {
 	Description         string    `json:"Description"`
 	Priority            int       `json:"Priority"`
 	Deadline            *string   `json:"Deadline,omitempty"`
+	PlannedWorkload     *float64  `json:"PlannedWorkload"`
+	ActualWorkload      *float64  `json:"ActualWorkload"`
 	IsEnabled           bool      `json:"IsEnabled"`
 	IsDescribed         bool      `json:"IsDescribed"`
 	Votes               int       `json:"Votes"`
@@ -75,6 +83,8 @@ type TicketInput struct {
 	Description string
 	Deadline    *time.Time
 	Priority    int      // 1..10, 0 = по умолчанию 5
+	PlanHours   *float64 // план, ч; nil = не трогать
+	FactHours   *float64 // факт, ч; nil = не трогать
 	Performers  []string // имена сотрудников или Id
 	Tags        []string // имена тегов
 	Attachments []AttachmentInput
@@ -348,6 +358,7 @@ func (s *Service) CreateTicket(ctx context.Context, in TicketInput) (*Ticket, *B
 		Priority: pr, IsEnabled: true, IsDescribed: in.Description != "",
 		TicketsTags: refsFromTags(tagIDs), Performers: refsFromPerformers(perfIDs),
 		Attachments: atts, AttachmentsCount: len(atts),
+		PlannedWorkload: in.PlanHours, ActualWorkload: in.FactHours,
 	}
 	if in.Deadline != nil {
 		d := in.Deadline.UTC().Format(time.RFC3339)
@@ -413,17 +424,28 @@ func (s *Service) UpdateTicket(ctx context.Context, ticketID int64, in TicketInp
 	if err != nil {
 		return nil, notes, err
 	}
+	// Без переноса место в колонке не задаём, иначе карточка всплывёт наверх.
+	pos := keepPosition
 	if moveTo != "" {
 		col, err := s.resolveColumn(ctx, cur.BoardID, moveTo)
 		if err != nil {
 			return nil, notes, err
 		}
-		colID = col.ID
+		if col.ID != colID {
+			colID, pos = col.ID, 0
+		}
 	}
 	t := ticketWire{
 		ID: cur.ID, BoardID: cur.BoardID, Name: cur.Name, Description: cur.Description,
 		Priority: 5, IsEnabled: true, IsDescribed: cur.Description != "",
 		Votes: cur.Votes, CommentsCount: cur.Comments,
+		PlannedWorkload: cur.Laborious, ActualWorkload: cur.Elapsed,
+	}
+	if in.PlanHours != nil {
+		t.PlannedWorkload = in.PlanHours
+	}
+	if in.FactHours != nil {
+		t.ActualWorkload = in.FactHours
 	}
 	if cur.Priority != nil {
 		t.Priority = *cur.Priority
@@ -492,7 +514,7 @@ func (s *Service) UpdateTicket(ctx context.Context, ticketID int64, in TicketInp
 		t.Attachments = atts
 	}
 	t.AttachmentsCount = len(cur.Attachments) + len(t.Attachments)
-	r, err := s.saveTicket(ctx, cur.BoardID, ticketRef{ID: refID, Position: 0, ColumnID: colID, Ticket: t})
+	r, err := s.saveTicket(ctx, cur.BoardID, ticketRef{ID: refID, Position: pos, ColumnID: colID, Ticket: t})
 	if err != nil {
 		return nil, notes, err
 	}

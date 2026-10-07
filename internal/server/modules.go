@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,6 +296,8 @@ type createTicketIn struct {
 	Description string     `json:"description,omitempty" jsonschema:"описание"`
 	Deadline    string     `json:"deadline,omitempty" jsonschema:"срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ (дата без времени = 18:00)"`
 	Priority    int        `json:"priority,omitempty" jsonschema:"приоритет 1..10, по умолчанию 5"`
+	PlanHours   *float64   `json:"plan_hours,omitempty" jsonschema:"план, часы"`
+	FactHours   *float64   `json:"fact_hours,omitempty" jsonschema:"факт, часы"`
 	Performers  []string   `json:"performers,omitempty" jsonschema:"исполнители: фамилии или Id сотрудников"`
 	Tags        []string   `json:"tags,omitempty" jsonschema:"теги: названия существующих тегов доски"`
 	Attachments []attachIn `json:"attachments,omitempty" jsonschema:"вложения: в каждом ровно одно из url, file, document_id"`
@@ -306,6 +309,8 @@ type updateTicketIn struct {
 	Description string     `json:"description,omitempty" jsonschema:"новое описание целиком; не передавайте, если менять не нужно"`
 	Deadline    string     `json:"deadline,omitempty" jsonschema:"новый срок: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"`
 	Priority    int        `json:"priority,omitempty" jsonschema:"приоритет 1..10"`
+	PlanHours   *float64   `json:"plan_hours,omitempty" jsonschema:"новый план, часы; не передавайте, если менять не нужно"`
+	FactHours   *float64   `json:"fact_hours,omitempty" jsonschema:"новый факт, часы; не передавайте, если менять не нужно"`
 	Performers  []string   `json:"performers,omitempty" jsonschema:"добавить исполнителей: фамилии или Id"`
 	Tags        []string   `json:"tags,omitempty" jsonschema:"добавить теги: названия"`
 	Column      string     `json:"column,omitempty" jsonschema:"перенести в колонку: название или Id"`
@@ -478,9 +483,12 @@ func (s *Server) registerBoardWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_create_ticket",
-		Description: "Создать карточку на agile-доске. Доску, колонку, исполнителей и теги можно называть словами, сервер сопоставит их сам; теги должны уже существовать на доске. В attachments можно сразу приложить ссылки, документы RX по Id и файлы с диска. Без column карточка попадает в первую колонку. Меняет данные сразу. Для поручения с контролем срока в самой системе используйте rx_create_simple_task. Перед вызовом перескажите пользователю доску, колонку, название и срок.",
+		Description: "Создать карточку на agile-доске. Доску, колонку, исполнителей и теги можно называть словами, сервер сопоставит их сам; теги должны уже существовать на доске. План и факт в часах задаются в plan_hours и fact_hours. В attachments можно сразу приложить ссылки, документы RX по Id и файлы с диска. Без column карточка попадает в первую колонку. Меняет данные сразу. Для поручения с контролем срока в самой системе используйте rx_create_simple_task. Перед вызовом перескажите пользователю доску, колонку, название и срок.",
 		Annotations: rw("Создать карточку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createTicketIn) (*mcp.CallToolResult, any, error) {
+		if err := checkHours(in.PlanHours, in.FactHours); err != nil {
+			return fail(err)
+		}
 		var dl *time.Time
 		if in.Deadline != "" {
 			t, err := parseDeadline(in.Deadline, s.svc.F.Loc)
@@ -496,6 +504,12 @@ func (s *Server) registerBoardWrite() {
 		if dl != nil {
 			msg += ", срок " + s.svc.F.DateTime(dl)
 		}
+		if in.PlanHours != nil {
+			msg += ", план " + hours(*in.PlanHours)
+		}
+		if in.FactHours != nil {
+			msg += ", факт " + hours(*in.FactHours)
+		}
 		atts, attLabels := attachInputs(in.Attachments)
 		if len(atts) > 0 {
 			msg += ", вложения: " + strings.Join(attLabels, "; ")
@@ -505,7 +519,8 @@ func (s *Server) registerBoardWrite() {
 		}
 		t, b, col, notes, err := s.svc.CreateTicket(ctx, rx.TicketInput{
 			Board: in.Board, Column: in.Column, Name: in.Name, Description: in.Description,
-			Deadline: dl, Priority: in.Priority, Performers: in.Performers, Tags: in.Tags, Attachments: atts,
+			Deadline: dl, Priority: in.Priority, PlanHours: in.PlanHours, FactHours: in.FactHours,
+			Performers: in.Performers, Tags: in.Tags, Attachments: atts,
 		})
 		if err != nil {
 			return fail(err)
@@ -526,9 +541,12 @@ func (s *Server) registerBoardWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_update_ticket",
-		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, добавить исполнителей, теги и вложения (ссылка, документ RX по Id, файл с диска) или перенести в другую колонку. Меняются только переданные поля, остальные остаются. Убрать исполнителя, тег или вложение этим инструментом нельзя. Нужен числовой Id карточки из rx_tickets или rx_board. Меняет данные сразу.",
+		Description: "Изменить карточку на agile-доске: название, описание, срок, приоритет, план и факт в часах, добавить исполнителей, теги и вложения (ссылка, документ RX по Id, файл с диска) или перенести в другую колонку. Меняются только переданные поля, остальные остаются. Убрать исполнителя, тег или вложение этим инструментом нельзя. Нужен числовой Id карточки из rx_tickets или rx_board. Меняет данные сразу.",
 		Annotations: rw("Изменить карточку", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in updateTicketIn) (*mcp.CallToolResult, any, error) {
+		if err := checkHours(in.PlanHours, in.FactHours); err != nil {
+			return fail(err)
+		}
 		cur, err := s.svc.TicketByID(ctx, in.ID)
 		if err != nil {
 			return fail(err)
@@ -553,6 +571,12 @@ func (s *Server) registerBoardWrite() {
 		}
 		if in.Priority > 0 {
 			what = append(what, fmt.Sprintf("приоритет %d", in.Priority))
+		}
+		if in.PlanHours != nil {
+			what = append(what, "план "+hours(*in.PlanHours))
+		}
+		if in.FactHours != nil {
+			what = append(what, "факт "+hours(*in.FactHours))
 		}
 		if len(in.Performers) > 0 {
 			what = append(what, "исполнителей: "+strings.Join(in.Performers, ", "))
@@ -579,6 +603,7 @@ func (s *Server) registerBoardWrite() {
 		}
 		t, notes, err := s.svc.UpdateTicket(ctx, in.ID, rx.TicketInput{
 			Name: in.Name, Description: in.Description, Deadline: dl, Priority: in.Priority,
+			PlanHours: in.PlanHours, FactHours: in.FactHours,
 			Performers: in.Performers, Tags: in.Tags, Attachments: atts,
 		}, in.Column)
 		if err != nil {
@@ -591,4 +616,20 @@ func (s *Server) registerBoardWrite() {
 		}
 		return text(out), nil, nil
 	})
+}
+
+// checkHours отсекает отрицательные часы: доска их примет, а отчёты по времени нет.
+func checkHours(plan, fact *float64) error {
+	if plan != nil && *plan < 0 {
+		return errors.New("plan_hours не может быть отрицательным")
+	}
+	if fact != nil && *fact < 0 {
+		return errors.New("fact_hours не может быть отрицательным")
+	}
+	return nil
+}
+
+// hours печатает часы без лишних нулей: 4 ч, 1.5 ч.
+func hours(h float64) string {
+	return strconv.FormatFloat(h, 'f', -1, 64) + " ч"
 }
