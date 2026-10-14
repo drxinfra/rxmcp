@@ -2,6 +2,7 @@ package odata
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -92,5 +93,34 @@ func TestClientRenewsOn401(t *testing.T) {
 	}
 	if renews != 1 {
 		t.Fatalf("продлений %d", renews)
+	}
+}
+
+func TestClientGetsCookieWhenMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("sungero_client"); err != nil || c.Value != "FRESH" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"value":[]}`))
+	}))
+	defer srv.Close()
+	cookie := ""
+	cl, err := New(Options{
+		BaseURL: srv.URL + "/odata",
+		Auth:    "cookie",
+		CookieFunc: func() (string, error) {
+			if cookie == "" {
+				return "", errors.New("нет файла")
+			}
+			return cookie, nil
+		},
+		CookieRenew: func(context.Context) error { cookie = "sungero_client=FRESH"; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.List(t.Context(), "IUsers", Query{Top: 1}); err != nil {
+		t.Fatalf("без файла куки: %v", err)
 	}
 }

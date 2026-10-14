@@ -1,6 +1,6 @@
 {
   "author": "drxinfra",
-  "description": "MCP server for Directum RX: assignments, tasks, documents and their text, knowledge base, agile boards, project plans, any entity via OData, and search over the system help of your own RX version. Single binary, five sign-in modes, read-only by default.",
+  "description": "MCP server for Directum RX: assignments, tasks, documents and their text, knowledge base, agile boards, project plans, any entity via OData, and search over the system help of your own RX version. Single binary, five sign-in modes including SSO through your Keycloak session without an admin, read-only by default.",
   "homepage": "https://github.com/drxinfra/rxmcp",
   "identifier": "drxinfra-rxmcp",
   "name": "Directum RX (rxmcp)",
@@ -1284,7 +1284,7 @@
       }
     }
   ],
-  "version": "0.7.0",
+  "version": "0.8.0",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
   "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",

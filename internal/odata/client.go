@@ -257,6 +257,12 @@ func (c *Client) setAuth(r *http.Request) error {
 		ck := c.cookie
 		if c.cookieFn != nil {
 			v, err := c.cookieFn()
+			// Куки ещё нет (первый запуск, logout файла куки), а сессия провайдера есть: получаем.
+			if err != nil && c.cookieNew != nil {
+				if rerr := c.cookieNew(r.Context()); rerr == nil {
+					v, err = c.cookieFn()
+				}
+			}
 			if err != nil {
 				return fmt.Errorf("нет сохранённой куки: %w", err)
 			}
