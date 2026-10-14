@@ -25,6 +25,7 @@ import (
 	"github.com/drxinfra/rxmcp/internal/odata"
 	"github.com/drxinfra/rxmcp/internal/rx"
 	"github.com/drxinfra/rxmcp/internal/server"
+	"github.com/drxinfra/rxmcp/internal/weblogin"
 )
 
 var version = "dev"
@@ -36,6 +37,8 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
                         и сам прописывает сервер в Claude Code, Claude Desktop, Cursor
   rxmcp login           обновить вход (кука из браузера или вход через провайдера)
   rxmcp login --paste   то же, но куку берёт из буфера обмена
+  rxmcp login --sso     вход через сессию провайдера (Keycloak): rxmcp сам берёт новую куку RX,
+                        когда старая истекает, пока жива сессия провайдера
   rxmcp check           проверить подключение к RX одним чтением и показать, что работает
   rxmcp docs index      скачать справку со своего стенда, чтобы помощник отвечал по ней
                         (если не выполнить, справка скачается сама при первом вопросе)
@@ -126,8 +129,10 @@ func run(args []string) error {
 				cookieFlag = true
 			case "--paste":
 				paste = true
+			case "--sso":
+				return loginSSO()
 			default:
-				return fmt.Errorf("login: неизвестный аргумент %q (есть --paste)", a)
+				return fmt.Errorf("login: неизвестный аргумент %q (есть --paste, --sso)", a)
 			}
 		}
 		if !cookieFlag && !paste {
@@ -143,6 +148,9 @@ func run(args []string) error {
 			return err
 		}
 		if err := auth.ForgetCookie(cfg.URL); err != nil {
+			return err
+		}
+		if err := os.Remove(weblogin.File(auth.Dir(), cfg.URL)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		if cfg.OIDCIssuer != "" {
@@ -202,6 +210,20 @@ func newClient(cfg *config.Config) (*odata.Client, error) {
 		// перезапускать Claude не нужно
 		u := cfg.URL
 		o.CookieFunc = func() (string, error) { return auth.LoadCookie(u) }
+		o.CookieSave = func(c string) error { return auth.SaveCookie(u, c) }
+		// Есть сессия провайдера (rxmcp login --sso): истёкшую куку rxmcp перевыпустит сам.
+		if sf := weblogin.File(auth.Dir(), u); fileExists(sf) {
+			root, err := weblogin.Root(u)
+			if err != nil {
+				return nil, err
+			}
+			tr, err := odata.NewTransport(cfg.InsecureTLS, cfg.CAFile)
+			if err != nil {
+				return nil, err
+			}
+			r := &weblogin.Renewer{Root: root, Transport: tr, StateFile: sf, Save: o.CookieSave}
+			o.CookieRenew = r.Renew
+		}
 	}
 	if cfg.Auth == "oidc" {
 		src, err := auth.NewSource(oidcConfig(cfg))
@@ -262,6 +284,79 @@ func loginCookie(paste bool) error {
 	os.Setenv("RXMCP_AUTH", "cookie")
 	os.Unsetenv("RXMCP_COOKIE")
 	return check()
+}
+
+// loginSSO сохраняет куки сессии провайдера входа и сразу получает по ним куку RX.
+// Дальше rxmcp перевыпускает куку RX сам на каждом 401, пока провайдер не попросит
+// войти заново.
+func loginSSO() error {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if cfg.URL == "" {
+		return errors.New("не задан адрес RX: выполните rxmcp setup")
+	}
+	root, err := weblogin.Root(cfg.URL)
+	if err != nil {
+		return err
+	}
+	tr, err := odata.NewTransport(cfg.InsecureTLS, cfg.CAFile)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	scope, err := weblogin.Discover(ctx, tr, root)
+	if err != nil {
+		return err
+	}
+	fmt.Printf(`Вход RX идёт через %s
+1. Откройте в браузере %saccount (вы уже вошли, пароль не спросят).
+2. F12 → Network → обновите страницу → первый запрос → Request Headers → cookie → Copy value.
+`, scope, scope)
+	fmt.Print("Нажмите Enter, когда скопировано: ")
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return err
+	}
+	if line = cookieOrClipboard(line); line == "" {
+		return errors.New("кук провайдера нет: скопируйте заголовок cookie и повторите rxmcp login --sso")
+	}
+	cookies, err := weblogin.ParseProviderCookies(line)
+	if err != nil {
+		return err
+	}
+	st := &weblogin.State{URL: scope, Cookies: cookies, Updated: time.Now()}
+	ck, err := weblogin.Login(ctx, tr, root, st)
+	if err != nil {
+		return err
+	}
+	sf := weblogin.File(auth.Dir(), cfg.URL)
+	if err := weblogin.Save(sf, st); err != nil {
+		return err
+	}
+	if err := auth.SaveCookie(cfg.URL, ck); err != nil {
+		return err
+	}
+	fmt.Printf("Сессия провайдера сохранена в %s, новая кука RX получена.\n", sf)
+	if cfg.Auth != "cookie" {
+		if prof, err := config.LoadFile(); err == nil {
+			prof["RXMCP_AUTH"] = "cookie"
+			if err := config.SaveFile(prof); err == nil {
+				fmt.Println("Способ входа в профиле переключён на cookie.")
+			}
+		}
+	}
+	fmt.Println("Проверка:")
+	os.Setenv("RXMCP_AUTH", "cookie")
+	os.Unsetenv("RXMCP_COOKIE")
+	return check()
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // cookieHint предупреждает о частой ошибке: в списке куки RX берут external_identity

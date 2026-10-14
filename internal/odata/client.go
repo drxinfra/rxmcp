@@ -16,21 +16,25 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // Client держит HTTP-клиент и способ аутентификации.
 type Client struct {
-	base     string
-	auth     string
-	login    string
-	pass     string
-	token    string
-	cookie   string
-	cookieFn func() (string, error)
-	tokenFn  func(context.Context) (string, error)
-	http     *http.Client
-	MaxBody  int64
+	base       string
+	auth       string
+	login      string
+	pass       string
+	token      string
+	cookie     string
+	cookieFn   func() (string, error)
+	cookieSave func(string) error
+	cookieNew  func(context.Context) error
+	renewed    atomic.Int64
+	tokenFn    func(context.Context) (string, error)
+	http       *http.Client
+	MaxBody    int64
 }
 
 // Options параметры создания клиента.
@@ -44,6 +48,12 @@ type Options struct {
 	// CookieFunc отдаёт актуальную куку. Читается на каждом запросе, поэтому
 	// обновление куки не требует перезапуска клиента. Имеет приоритет над Cookie.
 	CookieFunc func() (string, error)
+	// CookieSave сохраняет куку, которую RX прислал в ответе (Set-Cookie). Получает заголовок
+	// Cookie целиком, с уже заменёнными значениями.
+	CookieSave func(string) error
+	// CookieRenew получает новую куку, когда RX ответил 401 (вход через сессию провайдера,
+	// rxmcp login --sso). Если вернула nil, запрос повторяется один раз с новой кукой.
+	CookieRenew func(context.Context) error
 	// TokenFunc выдаёт актуальный bearer-токен (OIDC с обновлением). Имеет приоритет над Token.
 	TokenFunc   func(context.Context) (string, error)
 	Timeout     time.Duration
@@ -62,7 +72,7 @@ type Error struct {
 func (e *Error) Error() string {
 	switch e.Status {
 	case 401:
-		return "RX отклонил учётку (401). Для basic проверьте логин и пароль (у логина должен быть тип «пароль»). Для cookie сессия истекла: войдите в RX в браузере и выполните `rxmcp login --paste`, перезапускать Claude не нужно. Для oidc: `rxmcp login`"
+		return "RX отклонил учётку (401). Для basic проверьте логин и пароль (у логина должен быть тип «пароль»). Для cookie сессия истекла: войдите в RX в браузере и выполните `rxmcp login --paste` (или один раз `rxmcp login --sso`, тогда rxmcp будет обновлять куку сам), перезапускать Claude не нужно. Для oidc: `rxmcp login`"
 	case 403:
 		return "нет прав (403): у этой учётки нет доступа к объекту или к сервису интеграции"
 	case 404:
@@ -77,15 +87,15 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("RX вернул %d на %s %s", e.Status, e.Method, e.Path)
 }
 
-// New создаёт клиент.
-func New(o Options) (*Client, error) {
+// NewTransport транспорт с настройками TLS из профиля. Общий для OData и входа через веб-клиент.
+func NewTransport(insecure bool, caFile string) (*http.Transport, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	if o.InsecureTLS {
+	if insecure {
 		tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // осознанный выбор пользователя
 	}
-	if o.CAFile != "" {
-		pem, err := os.ReadFile(o.CAFile)
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile)
 		if err != nil {
 			return nil, fmt.Errorf("RXMCP_CA: %w", err)
 		}
@@ -98,21 +108,131 @@ func New(o Options) (*Client, error) {
 		}
 		tr.TLSClientConfig.RootCAs = pool
 	}
+	return tr, nil
+}
+
+// New создаёт клиент.
+func New(o Options) (*Client, error) {
+	tr, err := NewTransport(o.InsecureTLS, o.CAFile)
+	if err != nil {
+		return nil, err
+	}
 	if o.Timeout == 0 {
 		o.Timeout = 30 * time.Second
 	}
 	return &Client{
-		base:     strings.TrimRight(o.BaseURL, "/"),
-		auth:     o.Auth,
-		login:    o.Login,
-		pass:     o.Password,
-		token:    o.Token,
-		cookie:   o.Cookie,
-		cookieFn: o.CookieFunc,
-		tokenFn:  o.TokenFunc,
-		http:     &http.Client{Transport: tr, Timeout: o.Timeout},
-		MaxBody:  64 << 20, // тела версий документов бывают большими (сканы, вложения)
+		base:       strings.TrimRight(o.BaseURL, "/"),
+		auth:       o.Auth,
+		login:      o.Login,
+		pass:       o.Password,
+		token:      o.Token,
+		cookie:     o.Cookie,
+		cookieFn:   o.CookieFunc,
+		cookieSave: o.CookieSave,
+		cookieNew:  o.CookieRenew,
+		tokenFn:    o.TokenFunc,
+		http:       &http.Client{Transport: tr, Timeout: o.Timeout},
+		MaxBody:    64 << 20, // тела версий документов бывают большими (сканы, вложения)
 	}, nil
+}
+
+// Renewed сколько раз за жизнь клиента RX прислал новую куку и она сохранена.
+func (c *Client) Renewed() int64 { return c.renewed.Load() }
+
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	c.absorb(resp)
+	if resp.StatusCode != http.StatusUnauthorized || c.auth != "cookie" || c.cookieNew == nil {
+		return resp, nil
+	}
+	// Кука истекла: берём новую через сессию провайдера и повторяем запрос один раз.
+	if rerr := c.cookieNew(req.Context()); rerr != nil {
+		fmt.Fprintf(os.Stderr, "rxmcp: новую куку получить не удалось: %v\n", rerr)
+		return resp, nil
+	}
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, berr := req.GetBody()
+		if berr != nil {
+			return resp, nil
+		}
+		retry.Body = body
+	}
+	if err := c.setAuth(retry); err != nil {
+		return resp, nil
+	}
+	resp.Body.Close()
+	resp, err = c.http.Do(retry)
+	if err == nil {
+		c.absorb(resp)
+	}
+	return resp, err
+}
+
+// absorb сохраняет куку, которую RX выдал в ответ. Сессия RX бывает скользящей: сервер
+// продлевает её на запросах и присылает новое значение. Без этого продлённая кука терялась,
+// а старая к утру истекала.
+func (c *Client) absorb(resp *http.Response) {
+	if c.auth != "cookie" || c.cookieSave == nil || resp.StatusCode >= 400 {
+		return
+	}
+	if b, err := url.Parse(c.base); err != nil || b.Host != resp.Request.URL.Host {
+		return
+	}
+	set := resp.Cookies()
+	if len(set) == 0 {
+		return
+	}
+	if Debug {
+		names := make([]string, 0, len(set))
+		for _, s := range set {
+			names = append(names, s.Name)
+		}
+		fmt.Fprintf(os.Stderr, "rxmcp: RX прислал куки: %s\n", strings.Join(names, ", "))
+	}
+	next, changed := MergeCookies(resp.Request.Header.Get("Cookie"), set, time.Now())
+	if !changed {
+		return
+	}
+	if err := c.cookieSave(next); err != nil {
+		fmt.Fprintf(os.Stderr, "rxmcp: новую куку RX сохранить не удалось: %v\n", err)
+		return
+	}
+	c.renewed.Add(1)
+}
+
+// MergeCookies подставляет в заголовок Cookie новые значения из Set-Cookie. Меняются только
+// куки, которые в заголовке уже есть: посторонние (балансировщик, аналитика) не копим.
+// Удаление куки (пустое значение, истёкший срок) не применяем: этим RX отвечает на выход,
+// а сохранённую куку человек убирает сам через rxmcp logout.
+func MergeCookies(header string, set []*http.Cookie, now time.Time) (string, bool) {
+	parts := strings.Split(header, ";")
+	changed := false
+	for _, s := range set {
+		if s.Value == "" || s.MaxAge < 0 || (!s.Expires.IsZero() && s.Expires.Before(now)) {
+			continue
+		}
+		for i, p := range parts {
+			name, val, ok := strings.Cut(strings.TrimSpace(p), "=")
+			if !ok || name != s.Name {
+				continue
+			}
+			if val != s.Value {
+				parts[i] = name + "=" + s.Value
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return header, false
+	}
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return strings.Join(parts, "; "), true
 }
 
 // Base возвращает корень OData.
@@ -248,7 +368,7 @@ func (c *Client) Raw(ctx context.Context, path string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	req.Header.Set("Accept", "*/*")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, "", netErr(err)
 	}
@@ -280,7 +400,7 @@ func (c *Client) Abs(ctx context.Context, rawURL string) ([]byte, string, error)
 		}
 	}
 	req.Header.Set("Accept", "text/html,*/*")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, "", netErr(err)
 	}
@@ -313,7 +433,7 @@ func (c *Client) Action(ctx context.Context, module, action string, params map[s
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, netErr(err)
 	}
@@ -346,7 +466,7 @@ func (c *Client) get(ctx context.Context, path string, v url.Values) ([]byte, er
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, netErr(err)
 	}

@@ -37,7 +37,21 @@ func SaveCookie(rxURL, cookie string) error {
 	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(f, []byte(cookie+"\n"), 0o600)
+	// Через временный файл и переименование: куку пишут сразу несколько процессов
+	// (Claude, Cursor, keepalive), и читающий не должен застать файл пустым.
+	tmp, err := os.CreateTemp(filepath.Dir(f), ".cookie-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(cookie + "\n"); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), f)
 }
 
 // withName дописывает имя куки, если вставлено одно значение. Проверять по знаку равенства
