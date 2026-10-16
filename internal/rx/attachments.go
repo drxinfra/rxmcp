@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/drxinfra/rxmcp/internal/auth"
 )
 
 // Вложение карточки это пара «название и адрес». Адрес бывает трёх видов:
@@ -104,7 +106,43 @@ func (s *Service) resolveAttachments(ctx context.Context, in []AttachmentInput) 
 	return out, nil
 }
 
+// secretDirs каталоги в домашнем, где обычно лежат ключи и токены.
+var secretDirs = []string{".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".password-store",
+	filepath.Join(".config", "gcloud"), filepath.Join(".config", "gh"), filepath.Join("Library", "Keychains")}
+
+// secretPath сообщает, что файл лежит среди секретов: в каталоге настроек rxmcp (cookie,
+// сессия провайдера, токены) или в одном из secretDirs. Такие файлы на доску не уходят:
+// иначе инструкция в тексте документа RX может попросить модель приложить cookie
+// пользователя к карточке, которую видит автор документа.
+func secretPath(path string) (string, bool) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	if p, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = p
+	}
+	roots := []string{auth.Dir()}
+	if h, err := os.UserHomeDir(); err == nil {
+		for _, d := range secretDirs {
+			roots = append(roots, filepath.Join(h, d))
+		}
+	}
+	for _, r := range roots {
+		if p, err := filepath.EvalSymlinks(r); err == nil {
+			r = p
+		}
+		if rel, err := filepath.Rel(r, abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return r, true
+		}
+	}
+	return "", false
+}
+
 func (s *Service) uploadFile(ctx context.Context, path string) (string, error) {
+	if dir, bad := secretPath(path); bad {
+		return "", fmt.Errorf("файл %s лежит в %s, там хранятся ключи и учётные данные: такие файлы rxmcp не прикладывает", path, dir)
+	}
 	st, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("файл %s: %w", path, err)

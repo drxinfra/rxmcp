@@ -8,6 +8,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # id-token и attestations нужны для подписи происхождения архивов (Sigstore через OIDC GitHub).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -16,6 +21,13 @@ jobs:
       - run: hack/leakcheck.sh
       - run: go test ./...
       - run: hack/build.sh "${GITHUB_REF_NAME}"
+      # Подпись происхождения: архив собран этим workflow из этого коммита.
+      # Проверка у пользователя: gh attestation verify <архив> --repo drxinfra/rxmcp
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
       - uses: softprops/action-gh-release@v2
         with:
           files: |

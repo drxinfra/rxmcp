@@ -54,6 +54,8 @@ type Config struct {
 	HTTPSecret string
 	// Адрес каталога справки, если она лежит не рядом с веб-клиентом.
 	HelpURL string
+	// Раз в сутки узнавать, не вышла ли новая версия rxmcp. RXMCP_UPDATE_CHECK=0 выключает.
+	UpdateCheck bool
 }
 
 // HelpBase адрес каталога справки на стенде. По умолчанию справка лежит рядом с веб-клиентом:
@@ -108,6 +110,7 @@ func FromEnv() (*Config, error) {
 		HTTPAddr:         get("RXMCP_HTTP_ADDR"),
 		HTTPSecret:       get("RXMCP_HTTP_SECRET"),
 		HelpURL:          get("RXMCP_HELP_URL"),
+		UpdateCheck:      !isFalse(get("RXMCP_UPDATE_CHECK")),
 	}
 	if v := get("RXMCP_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)

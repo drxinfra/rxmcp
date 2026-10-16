@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,7 +53,8 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   rxmcp query SET [$k=v …]   один GET к OData для отладки, например: rxmcp query IAssignments '$top=1'
   rxmcp call Module/Action '{json}'   один POST действия для отладки (меняет данные, если действие пишущее)
   rxmcp docs search СЛОВА   поиск по скачанной справке; docs topic ФАЙЛ, docs status
-  rxmcp version
+  rxmcp update          поставить последнюю версию вместо текущей (архив сверяется с SHA256SUMS)
+  rxmcp version         версия; заодно скажет, если вышла новая
 
 Настройки лежат в профиле (rxmcp config path), права 0600. Переменные окружения
 имеют приоритет над профилем — так удобно в контейнере и в CI. Имена одинаковые:
@@ -78,6 +80,8 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   RXMCP_HELP_URL      каталог справки, если он не рядом с веб-клиентом (по умолчанию <адрес RX>/Client/WebHelp/ru-RU)
   RXMCP_HTTP_ADDR     адрес для serve --http, например 127.0.0.1:8765
   RXMCP_HTTP_SECRET   общий секрет для HTTP-режима, клиент шлёт Authorization: Bearer <секрет>
+  RXMCP_UPDATE_CHECK  0 = не узнавать о новых версиях (по умолчанию раз в сутки спрашивает
+                      drxinfra.ru/dl/rxmcp/latest.txt, при недоступности GitHub; больше ничего не шлёт)
 `
 
 func main() {
@@ -96,7 +100,12 @@ func run(args []string) error {
 	switch cmd {
 	case "version", "-v", "--version":
 		fmt.Println("rxmcp", version)
+		if v := availableUpdate(3 * time.Second); v != "" {
+			fmt.Printf("Вышла %s: rxmcp update\n", v)
+		}
 		return nil
+	case "update":
+		return selfUpdate()
 	case "help", "-h", "--help":
 		fmt.Printf(usage, version)
 		return nil
@@ -484,6 +493,14 @@ func serve(httpMode bool) error {
 	if cfg.AllowWrite {
 		mode = "read-write"
 	}
+	if cfg.UpdateCheck {
+		go func() {
+			if v := availableUpdate(10 * time.Second); v != "" {
+				log.Info("new version available", "current", version, "latest", v)
+				srv.SetUpdate(v)
+			}
+		}()
+	}
 	if !httpMode {
 		log.Info("rxmcp started", "version", version, "transport", "stdio", "rx", cfg.ODataURL(), "mode", mode)
 		return srv.MCP.Run(ctx, &mcp.StdioTransport{})
@@ -493,7 +510,9 @@ func serve(httpMode bool) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.Handle("/mcp", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != secret {
+		// Сравнение за постоянное время: по задержке ответа секрет не подобрать.
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -654,6 +673,9 @@ func check() error {
 		fmt.Print(" Режим только чтение.")
 	}
 	fmt.Println()
+	if v := availableUpdate(5 * time.Second); v != "" {
+		fmt.Printf("Вышла rxmcp %s (у вас %s): rxmcp update\n", v, version)
+	}
 	if bad > 0 {
 		return errors.New("часть проверок не прошла")
 	}

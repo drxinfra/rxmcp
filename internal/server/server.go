@@ -35,6 +35,7 @@ type Server struct {
 	svc *rx.Service
 	opt Options
 	log *slog.Logger
+	upd updateNotice
 }
 
 const instructions = `Это Directum RX пользователя. Инструменты rx_* читают задания, задачи и документы от его имени.
@@ -59,6 +60,7 @@ func New(svc *rx.Service, opt Options) *Server {
 		Instructions: instructions,
 		Logger:       opt.Logger,
 	})
+	s.MCP.AddReceivingMiddleware(s.updateMiddleware)
 	s.registerRead()
 	s.registerModules()
 	if opt.Help != nil {
@@ -178,7 +180,12 @@ func (s *Server) registerRead() {
 		if err != nil {
 			return fail(err)
 		}
-		return text(me.Text()), nil, nil
+		out := strings.TrimRight(me.Text(), "\n") + "\nrxmcp " + s.opt.Version
+		if t := s.updateText(); t != "" {
+			out += "\n" + t
+			s.takeUpdate() // уже сказано, второй раз в этом сеансе не нужно
+		}
+		return text(out), nil, nil
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{

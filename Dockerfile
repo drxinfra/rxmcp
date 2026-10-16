@@ -17,5 +17,7 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /rxmcp /rxmcp
 # Настройки внутри контейнера: смонтируйте каталог сюда, если нужен профиль или cookie.
 ENV RXMCP_HOME=/config
+# В контейнере бинарник меняют вместе с образом, проверка новых версий ни к чему.
+ENV RXMCP_UPDATE_CHECK=0
 VOLUME /config
 ENTRYPOINT ["/rxmcp"]
