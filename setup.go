@@ -173,7 +173,9 @@ func setup(args []string) error {
 			} else {
 				fmt.Println()
 				printCookieHelp(rxURL)
-				c := cookieOrClipboard(ask(in, "Нажмите Enter, когда кука скопирована", ""))
+				fmt.Print("Вставьте куку и нажмите Enter (или просто Enter, если она в буфере обмена): ")
+				l, _ := readLong(in)
+				c := cookieOrClipboard(l)
 				if c == "" {
 					fmt.Println("Пропускаю. Когда будет кука: скопируйте её и выполните rxmcp login --paste")
 				} else if err := auth.SaveCookie(rxURL, c); err != nil {
@@ -274,8 +276,8 @@ func printCookieHelp(rxURL string) {
 	fmt.Println("  1. Откройте", host, "и войдите как обычно.")
 	fmt.Println("  2. F12 → Application (в Firefox Хранилище) → Cookies → выберите адрес.")
 	fmt.Println("  3. Скопируйте значение sungero_client: одно значение или строку sungero_client=... целиком.")
-	fmt.Println("  Вставлять куку в терминал не нужно: программа возьмёт её из буфера обмена.")
-	fmt.Println("  Длинную строку терминал macOS и Linux не принимает (предел 1024 символа, вместо ввода звучит сигнал).")
+	fmt.Println("  4. Вставьте значение в терминал и нажмите Enter. Или просто нажмите Enter: программа возьмёт куку")
+	fmt.Println("     из буфера обмена (в WSL из буфера Windows). Ещё вариант: rxmcp login --stdin < файл.")
 }
 
 // registerClients прописывает сервер в MCP-клиенты. В запись клиента идёт только путь

@@ -37,7 +37,8 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   rxmcp setup           спросит адрес RX, логин и способ входа, проверит связь
                         и сам прописывает сервер в Claude Code, Claude Desktop, Cursor
   rxmcp login           обновить вход (кука из браузера или вход через провайдера)
-  rxmcp login --paste   то же, но куку берёт из буфера обмена
+  rxmcp login --paste   то же, но куку берёт из буфера обмена (в WSL из буфера Windows)
+  rxmcp login --stdin   куку берёт со стандартного ввода: rxmcp login --stdin < cookie.txt
   rxmcp login --sso     вход через сессию провайдера (Keycloak): rxmcp сам берёт новую куку RX,
                         когда старая истекает, пока жива сессия провайдера
   rxmcp check           проверить подключение к RX одним чтением и показать, что работает
@@ -131,26 +132,28 @@ func run(args []string) error {
 	case "call":
 		return call(args)
 	case "login":
-		paste, cookieFlag := false, false
+		src, cookieFlag := "", false
 		for _, a := range args {
 			switch a {
 			case "--cookie":
 				cookieFlag = true
 			case "--paste":
-				paste = true
+				src = "paste"
+			case "--stdin":
+				src = "stdin"
 			case "--sso":
 				return loginSSO()
 			default:
-				return fmt.Errorf("login: неизвестный аргумент %q (есть --paste, --sso)", a)
+				return fmt.Errorf("login: неизвестный аргумент %q (есть --paste, --stdin, --sso)", a)
 			}
 		}
-		if !cookieFlag && !paste {
+		if !cookieFlag && src == "" {
 			// Без флагов делаем то, что настроено: спорить с человеком не о чем.
 			if cfg, err := config.FromEnv(); err == nil && cfg.Auth == "oidc" {
 				return login()
 			}
 		}
-		return loginCookie(paste)
+		return loginCookie(src)
 	case "logout":
 		cfg, err := config.FromEnv()
 		if err != nil {
@@ -246,7 +249,9 @@ func newClient(cfg *config.Config) (*odata.Client, error) {
 
 // loginCookie принимает куку со стандартного ввода и кладёт её в файл.
 // Через ввод, а не аргументом: иначе кука осядет в истории командной строки.
-func loginCookie(paste bool) error {
+// loginCookie сохраняет куку RX. src: paste (буфер обмена), stdin (стандартный ввод)
+// или пусто (вставить в терминал либо нажать Enter и взять из буфера).
+func loginCookie(src string) error {
 	cfg, err := config.FromEnv()
 	if err != nil {
 		return err
@@ -255,17 +260,21 @@ func loginCookie(paste bool) error {
 		return errors.New("не задан адрес RX: выполните rxmcp setup")
 	}
 	var line string
-	if paste {
+	switch src {
+	case "paste":
 		line, err = clipboard()
 		if err != nil {
 			return err
 		}
 		fmt.Println("Взял куку из буфера обмена.")
-	} else {
+	case "stdin":
+		if line, err = readStdin(); err != nil {
+			return err
+		}
+	default:
 		printCookieHelp(cfg.URL)
-		fmt.Print("Нажмите Enter, когда кука скопирована: ")
-		rd := bufio.NewReader(os.Stdin)
-		line, err = rd.ReadString('\n')
+		fmt.Print("Вставьте куку и нажмите Enter (или просто Enter, если она в буфере обмена): ")
+		line, err = readLong(bufio.NewReader(os.Stdin))
 		if err != nil && line == "" {
 			return err
 		}
@@ -324,8 +333,8 @@ func loginSSO() error {
 1. Откройте в браузере %saccount (вы уже вошли, пароль не спросят).
 2. F12 → Network → обновите страницу → первый запрос → Request Headers → cookie → Copy value.
 `, scope, scope)
-	fmt.Print("Нажмите Enter, когда скопировано: ")
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	fmt.Print("Вставьте значение и нажмите Enter (или просто Enter, если оно в буфере обмена): ")
+	line, err := readLong(bufio.NewReader(os.Stdin))
 	if err != nil && line == "" {
 		return err
 	}

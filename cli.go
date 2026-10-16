@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -100,10 +102,10 @@ func knownKey(k string) bool {
 
 // clipboard читает буфер обмена. Нужно ровно для одного случая: куку скопировали
 // в браузере, и вставлять её в терминал руками незачем.
-// cookieOrClipboard возвращает куку, введённую в строке, а при пустом вводе берёт её
-// из буфера обмена. Вставить куку в терминал часто нельзя: строка ввода в macOS и Linux
-// ограничена 1024 символами, а sungero_client длиннее. Содержимое буфера, не похожее
-// на куку (короткое или в несколько строк), отбрасывается.
+// cookieOrClipboard возвращает куку, вставленную в строку, а при пустом вводе берёт её
+// из буфера обмена. Строку читает readLong: обычный ввод терминала macOS и Linux
+// ограничен 1024 (Linux 4096) символами, а sungero_client бывает длиннее. Содержимое
+// буфера, не похожее на куку (короткое или в несколько строк), отбрасывается.
 func cookieOrClipboard(line string) string {
 	if line = strings.TrimSpace(line); line != "" {
 		return line
@@ -130,6 +132,15 @@ func clipboard() (string, error) {
 		try = [][]string{{"powershell", "-NoProfile", "-Command", "Get-Clipboard"}}
 	default:
 		try = [][]string{{"wl-paste", "--no-newline"}, {"xclip", "-selection", "clipboard", "-o"}, {"xsel", "-b"}}
+		if wsl() {
+			// В WSL куку копируют в браузере Windows: буфер Linux о ней не знает, а wl-paste
+			// и xclip там обычно нет. Буфер Windows отдаёт powershell.exe; если пути Windows
+			// не добавлены в PATH, берём его по полному адресу.
+			try = append([][]string{
+				{"powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"},
+				{"/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"},
+			}, try...)
+		}
 	}
 	for _, c := range try {
 		if _, err := exec.LookPath(c[0]); err != nil {
@@ -145,5 +156,53 @@ func clipboard() (string, error) {
 		}
 		return s, nil
 	}
-	return "", errors.New("нет команды для чтения буфера обмена (нужен pbpaste, wl-paste, xclip или xsel)")
+	return "", errors.New("нет команды для чтения буфера обмена (нужен pbpaste, wl-paste, xclip или xsel): вставьте куку в терминал командой rxmcp login или передайте её через rxmcp login --stdin")
+}
+
+// wsl отвечает, что rxmcp запущен в Linux внутри Windows (WSL).
+func wsl() bool {
+	if os.Getenv("WSL_DISTRO_NAME") != "" {
+		return true
+	}
+	b, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	return strings.Contains(strings.ToLower(string(b)), "microsoft")
+}
+
+// readLong читает строку из терминала без предела длины. В каноническом режиме
+// терминал macOS не принимает строку длиннее 1024 символов, Linux длиннее 4096:
+// вставленная кука молча обрезается или вместо ввода звучит сигнал. На время чтения
+// терминал переводится в неканонический режим (символы приходят сразу, Enter завершает
+// строку), потом прежние настройки возвращаются. Стирание символов в этом режиме
+// не работает, но для вставки оно и не нужно.
+func readLong(in *bufio.Reader) (string, error) {
+	if runtime.GOOS != "windows" && isTTY() {
+		if stty, err := exec.LookPath("stty"); err == nil {
+			run := func(args ...string) (string, error) {
+				c := exec.Command(stty, args...)
+				c.Stdin = os.Stdin
+				out, err := c.Output()
+				return strings.TrimSpace(string(out)), err
+			}
+			if saved, err := run("-g"); err == nil && saved != "" {
+				if _, err := run("-icanon", "min", "1", "time", "0"); err == nil {
+					defer run(saved)
+				}
+			}
+		}
+	}
+	return in.ReadString('\n')
+}
+
+// readStdin читает куку целиком из стандартного ввода: rxmcp login --stdin < cookie.txt
+// или powershell.exe Get-Clipboard | rxmcp login --stdin.
+func readStdin() (string, error) {
+	b, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	s := strings.TrimSpace(string(b))
+	if s == "" {
+		return "", errors.New("на стандартном вводе пусто")
+	}
+	return s, nil
 }
