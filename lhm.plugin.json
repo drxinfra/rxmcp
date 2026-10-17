@@ -179,7 +179,7 @@
     },
     {
       "name": "rx_complete_assignment",
-      "description": "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять (result=Accepted) или вернуть на доработку (result=ForRework). Без result берётся стандартный результат для типа задания. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано.",
+      "description": "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять или вернуть на доработку, согласовать документ (в том числе с замечаниями) или вернуть на доработку, отметить ознакомление, рассмотрение. Без result берётся стандартный результат для типа задания. Задания на подписание не выполняет: подпись ставится только в RX. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -189,7 +189,7 @@
           },
           "result": {
             "type": "string",
-            "description": "результат: для простого задания Complete (по умолчанию), для приёмки Accepted (принять, по умолчанию) или ForRework (на доработку); можно по-русски: принять, на доработку, выполнено"
+            "description": "результат; по умолчанию стандартный для типа задания: простое Complete, приёмка Accepted, согласование Approved, ознакомление Acquainted, рассмотрение Explored или Informed. Можно по-русски: выполнено, принять, согласовать, с замечаниями, на доработку, ознакомлен. Варианты для задания показывает rx_get_assignment"
           }
         },
         "required": [
@@ -203,6 +203,40 @@
         "openWorldHint": false,
         "readOnlyHint": false,
         "title": "Выполнить задание"
+      }
+    },
+    {
+      "name": "rx_create_article",
+      "description": "Создать статью базы знаний в области: название и текст в markdown. Статья создаётся от имени пользователя и видна по правам области. Нужен Id области из rx_kb_areas. Перед созданием проверьте через rx_kb_search, что такой статьи ещё нет. Меняет данные в RX. Перед вызовом покажите пользователю название и начало текста.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "название статьи"
+          },
+          "text": {
+            "type": "string",
+            "description": "текст статьи в markdown: заголовки ##, списки, таблицы, ссылки"
+          },
+          "area_id": {
+            "type": "integer",
+            "description": "Id области знаний из rx_kb_areas"
+          }
+        },
+        "required": [
+          "title",
+          "text",
+          "area_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Создать статью"
       }
     },
     {
@@ -1183,6 +1217,104 @@
       }
     },
     {
+      "name": "rx_send_for_acquaintance",
+      "description": "Отправить документ на ознакомление сотрудникам: создаёт и стартует задачу на ознакомление, участники получают задания. Нужны Id документа (rx_find_documents), Id сотрудников (rx_find_employees) и срок. electronic=true требует от участников подтвердить ознакомление подписью в RX. Меняет данные в RX. Перед вызовом перескажите пользователю документ, участников и срок.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "integer",
+            "description": "Id документа: число после # в строке rx_find_documents"
+          },
+          "performer_ids": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "integer"
+            },
+            "description": "Id сотрудников, которые должны ознакомиться (rx_find_employees)"
+          },
+          "deadline": {
+            "type": "string",
+            "description": "срок ознакомления, обязателен: ГГГГ-ММ-ДД, ГГГГ-ММ-ДДTЧЧ:ММ, «завтра» или «через 3 дня»"
+          },
+          "text": {
+            "type": "string",
+            "description": "текст задачи: что и зачем прочитать"
+          },
+          "electronic": {
+            "type": "boolean",
+            "description": "true = электронное ознакомление: участник подтверждает его подписью в RX; по умолчанию обычное"
+          }
+        },
+        "required": [
+          "document_id",
+          "performer_ids",
+          "deadline"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Отправить на ознакомление"
+      }
+    },
+    {
+      "name": "rx_send_for_approval",
+      "description": "Отправить документ на согласование: создаёт и стартует задачу. mode=free (по умолчанию) это свободное согласование с указанными людьми и сроком. mode=rule это согласование по регламенту: маршрут, этапы и сроки строит правило согласования RX для вида документа, approver_ids добавляются сверх правила; если правила нет, RX откажет. Подпись документа этот инструмент не ставит. Меняет данные в RX. Перед вызовом перескажите пользователю документ, режим и согласующих.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "integer",
+            "description": "Id документа: число после # в строке rx_find_documents"
+          },
+          "approver_ids": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "integer"
+            },
+            "description": "Id согласующих (rx_find_employees); для свободного согласования обязательны, для mode=rule это дополнительные согласующие сверх правила"
+          },
+          "mode": {
+            "type": "string",
+            "description": "free (по умолчанию) = свободное согласование с указанными людьми; rule = по регламенту: маршрут строит правило согласования RX для вида документа"
+          },
+          "text": {
+            "type": "string",
+            "description": "текст задачи: что согласовать и на что обратить внимание"
+          },
+          "deadline": {
+            "type": "string",
+            "description": "срок свободного согласования: ГГГГ-ММ-ДД, «завтра», «через 3 дня»; в mode=rule сроки задаёт правило"
+          },
+          "signatory_id": {
+            "type": "integer",
+            "description": "для mode=rule: Id подписанта, если правило его не определяет само"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Отправить на согласование"
+      }
+    },
+    {
       "name": "rx_ticket",
       "description": "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket.",
       "inputSchema": {
@@ -1235,6 +1367,38 @@
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Поиск карточек"
+      }
+    },
+    {
+      "name": "rx_update_article",
+      "description": "Изменить статью базы знаний: название и (или) текст целиком в markdown. Новый текст записывается новой версией, прежняя остаётся в истории статьи. Сначала прочитайте статью через rx_kb_article и правьте её текст, а не пишите заново. Меняет данные в RX. Перед вызовом перескажите пользователю, что меняется.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Id статьи из rx_kb_search"
+          },
+          "title": {
+            "type": "string",
+            "description": "новое название; не передавайте, если не меняется"
+          },
+          "text": {
+            "type": "string",
+            "description": "новый текст целиком в markdown; запишется новой версией, прежняя останется в истории"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Изменить статью"
       }
     },
     {
@@ -1387,7 +1551,7 @@
       }
     }
   ],
-  "version": "0.10.1",
+  "version": "0.11.0",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
   "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",

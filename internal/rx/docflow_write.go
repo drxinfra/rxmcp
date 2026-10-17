@@ -93,7 +93,7 @@ func (s *Service) startCreated(ctx context.Context, data []byte, what string) (i
 }
 
 // CreateArticle создаёт статью базы знаний в области и кладёт текст первой версией.
-// Вид документа и состояние «черновик» RX проставляет сам при создании.
+// Вид документа и состояние RX проставляет сам при создании.
 func (s *Service) CreateArticle(ctx context.Context, title, text string, areaID int64) (int64, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {

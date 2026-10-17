@@ -584,12 +584,18 @@ var assignmentKinds = map[string]assignmentKind{
 	"DocumentReviewAssignment":        {"рассмотрение документа", []string{"Informed", "DocsRework"}},
 	"ReviewManagerAssignment":         {"рассмотрение руководителем", []string{"Explored", "ForRework"}},
 	"ReviewDraftResolutionAssignment": {"рассмотрение проекта резолюции", []string{"Informed", "ForExecution"}},
+	// Модуль DocflowApproval (25.x): в него уходит и свободное согласование, проверено вживую.
+	"EntityApprovalAssignment":     {"согласование", []string{"Approved", "WithSuggestions", "ForRework"}},
+	"EntityReworkAssignment":       {"доработка после согласования", []string{"ForReapproval"}},
+	"DocumentProcessingAssignment": {"обработка документа", []string{"Complete", "ForRework"}},
+	"AdvancedAssignment":           {"задание в согласовании", []string{"Complete", "ForRework"}},
+	"SigningAssignment":            {"подписание", nil},
 }
 
 var resultRu = map[string]string{
 	"Complete": "выполнено", "Accepted": "принять", "ForRework": "на доработку", "ForRevision": "на доработку",
 	"Approved": "согласовать", "WithSuggestions": "согласовать с замечаниями", "Reworked": "доработано",
-	"ForReapproving": "на повторное согласование", "Accept": "принять", "Execute": "выполнено",
+	"ForReapproving": "на повторное согласование", "ForReapproval": "на повторное согласование", "Accept": "принять", "Execute": "выполнено",
 	"Acquainted": "ознакомлен", "Informed": "принято к сведению", "Explored": "рассмотрено",
 	"DocsRework": "документы на доработку", "ForExecution": "на исполнение",
 }
@@ -610,7 +616,7 @@ func (a *Assignment) Results() []string { return assignmentKinds[a.Kind()].resul
 
 // ResultsHint строка для карточки: что передавать в result.
 func (a *Assignment) ResultsHint() string {
-	if a.Kind() == "ApprovalSigningAssignment" {
+	if a.Kind() == "ApprovalSigningAssignment" || a.Kind() == "SigningAssignment" {
 		return "подписание выполняется только в RX: результат «Подписать» ставит подпись, а rxmcp подписи не ставит"
 	}
 	r := a.Results()
@@ -681,7 +687,7 @@ func normalizeResult(kind, in string) string {
 // CompleteAssignment выполняет задание. Результат обязателен для RX: без него сервер отвечает 404.
 // Если result пустой, берётся стандартный для типа задания; синонимы вроде «принять» приводятся к значениям RX.
 func (s *Service) CompleteAssignment(ctx context.Context, a *Assignment, result string) (string, error) {
-	if a.Kind() == "ApprovalSigningAssignment" {
+	if a.Kind() == "ApprovalSigningAssignment" || a.Kind() == "SigningAssignment" {
 		return "", errors.New(a.ResultsHint())
 	}
 	res := normalizeResult(a.Kind(), result)

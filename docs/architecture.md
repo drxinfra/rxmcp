@@ -98,11 +98,18 @@ MCP-сервер для Directum RX. Даёт ИИ-ассистенту (Claude 
 | `rx_complete_assignment` | выполнить задание с результатом | `POST Docflow/CompleteAssignment` |
 | `rx_create_simple_task` | создать простую задачу исполнителям и стартовать | `POST Docflow/CreateSimpleTask`, затем `Docflow/StartTask` |
 | `rx_abort_task` | прекратить задачу | `POST Shell/AbortTask` |
+| `rx_send_for_acquaintance` | отправить документ на ознакомление | `POST RecordManagement/CreateAcquaintanceTask`, затем `Docflow/StartTask`: действие только сохраняет черновик |
+| `rx_send_for_approval` | свободное согласование или по регламенту | `POST Docflow/CreateFreeApprovalTask` или `CreateApprovalTask` (маршрут по правилу RX, указанные люди сверх правила), затем `Docflow/StartTask` |
+| `rx_create_article`, `rx_update_article` | статья базы знаний: создать в области, изменить название и текст | `POST IMemoArticles` с `Areas`, `MemoRX/CreateMemoVersion`; `MemoRX/UpdateArticleTitle`. Если текст не записался, пустая статья убирается `MemoRX/DeleteEmptyArticleById` |
 | `rx_create_ticket`, `rx_update_ticket` | завести карточку; изменить, перенести, добавить вложения | `POST AgileBoards/SaveTicket`; вложение это запись «название и адрес» со `State: Added`. Файл сначала уходит в `AgileBoards/UploadPersistedBinaryData` (base64) и получает адрес `storage://<Id>&<тип>`, документ RX прикладывается гиперссылкой `Sungero?type=…&id=…` |
 | `rx_comment_ticket` | добавить комментарий к карточке; читает комментарии `rx_ticket` | `POST TeamsCommonAPI/CreateComment` и `LoadComments`: кроме Id карточки и доски нужны идентификаторы их типов, они зашиты в `internal/rx/comments.go` и заменяются через `RXMCP_TICKET_TYPE_GUID`, `RXMCP_BOARD_TYPE_GUID` |
 | `rx_edit_comment`, `rx_delete_comment` | исправить или удалить свой комментарий; автор сверяется с `rx_whoami` | `POST TeamsCommonAPI/UpdateComment` (`commentId`, `comment`) и `DeleteComment` (`commentId`, `appId`) |
 | `rx_delete_tickets` | удалить карточки с доски; карточка остаётся в `ITickets` со статусом `Deleted` | `POST AgileBoards/RemoveTickets` по Id ссылок карточек на колонки (`IColumns?$expand=Tickets`), а не по Id карточек |
 | `rx_create_column` | колонка на доске | `POST AgileBoards/CreateColumn` (в конец, «Новая колонка»), `UpdateColumnConfig` (имя, финальная, лимит), `MoveColumn` (место, с нуля) |
+
+Результаты заданий для `rx_complete_assignment` взяты из метаданных модулей вендора (Docflow, DocflowApproval, RecordManagement версии 25.2), а не угаданы: у каждого типа задания свой набор, первый в списке подставляется по умолчанию, русские синонимы приводятся по смыслу («на доработку» это `ForRework` у свободного согласования и `ForRevision` у согласования по регламенту). Свободное согласование в 25.x порождает задания модуля DocflowApproval (`EntityApprovalAssignment`). Задания на подписание сервер не выполняет, и подписи вне задач (`Docflow/ApproveDocument`, `EndorseDocument`) сознательно не добавлены: если у пользователя один сертификат, это квалифицированная электронная подпись, её должен ставить человек.
+
+Проверено вживую на тестовом стенде 25.2: статья создаётся, правится и читается; ознакомление и свободное согласование стартуют, задания `AcquaintanceAssignment` (`Acquainted`), `EntityApprovalAssignment` (`Approved`), `AcquaintanceFinishAssignment` и `AdvancedAssignment` (`Complete`) выполняются, задачи закрываются. Согласование по регламенту вживую не запускалось: правило разослало бы задания реальным участникам маршрута. Права: на внедрениях создание статей часто дано отдельным ролям, а задачи на ознакомление требуют роли «Пользователи с доступом к делопроизводству»; без прав RX отвечает понятной ошибкой, и сервер её передаёт.
 
 Перед каждым действием записи сервер запрашивает у хоста подтверждение пользователя (elicitation). Если хост elicitation не поддерживает, действие всё равно выполняется: флаг записи уже явное согласие, а хосты и сами спрашивают перед вызовом инструментов без `readOnlyHint`. Хост, который заявил elicitation, но форму не показывает и отвечает отказом, сделает запись невозможной; для него `RXMCP_CONFIRM=0` выключает форму.
 
@@ -204,14 +211,16 @@ lhm.plugin.json         описание для LobeHub, обновляется 
 | 0.8 | 14.10.2026 | `login --sso`: вход через сессию провайдера без администратора, новая cookie на 401 |
 | 0.9 | 16.10.2026 | уведомление о новой версии и `rxmcp update`; подпись происхождения архивов; файлы из каталогов с секретами не прикладываются к карточкам; документ [security.md](security.md). В 0.9.1 cookie можно вставить в терминал любой длины, `login --stdin`, буфер Windows в WSL |
 | 0.10 | 17.10.2026 | текст PDF, сканы и документы-картинки изображениями страниц; `rx_whats_new`; правка и удаление своих комментариев, Id комментариев в `rx_ticket`. В 0.10.1 второй профиль (`RXMCP_HOME`) регистрируется в клиентах отдельным сервером, хост RX виден модели |
+| 0.11 | 17.10.2026 | ознакомление и согласование документов (свободное и по регламенту), статьи базы знаний, результаты заданий согласования и ознакомления |
 
 ## Что не сделано
 
 - Negotiate: SSPI на Windows, Kerberos на Linux.
 - Хранение секретов в связке ключей ОС (Keychain, Credential Manager, Secret Service) вместо файлов `0600`.
 - Сканы в JBIG2 и JPEG 2000 (компактный PDF у части МФУ): нужен свой декодер на Go.
-- Согласование и ознакомление документов, запись статей базы знаний.
 - Отметка рабочего времени (модуль TimeTracker, есть не на всех стендах): табель за период (`TimeTracker/GetTimeSheet`), поиск работ, на которые списывать (`FindWorkItems`, `FindLeadObjects`), и списание часов (`SaveTimeSheet`). Проверять только на тестовой учётке.
 - Полнотекстовый поиск по содержимому документов: в сервисе интеграции его нет, есть только у модуля вендора `IntegrationAIAgent` (`HandleMcpRequest`, нужна лицензия модуля).
 - Streamable HTTP с персональными учётками (сейчас HTTP-режим работает от одной учётки).
 - Пакет `.mcpb` для установки в Claude Desktop одним щелчком.
+
+Сознательно не делаем: подписание документов (задания на подписание, `ApproveDocument`, `EndorseDocument`) и создание, изменение и удаление произвольных сущностей через каталог.

@@ -128,7 +128,7 @@ func (s *Server) registerDocflowWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_create_article",
-		Description: "Создать статью базы знаний в области: название и текст в markdown. Статья создаётся черновиком от имени пользователя, видна по правам области. Нужен Id области из rx_kb_areas. Перед созданием проверьте через rx_kb_search, что такой статьи ещё нет. Меняет данные в RX. Перед вызовом покажите пользователю название и начало текста.",
+		Description: "Создать статью базы знаний в области: название и текст в markdown. Статья создаётся от имени пользователя и видна по правам области. Нужен Id области из rx_kb_areas. Перед созданием проверьте через rx_kb_search, что такой статьи ещё нет. Меняет данные в RX. Перед вызовом покажите пользователю название и начало текста.",
 		Annotations: rw("Создать статью", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createArticleIn) (*mcp.CallToolResult, any, error) {
 		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Создать статью «%s» в области %d (%d символов текста)?", in.Title, in.AreaID, len([]rune(in.Text)))); err != nil || !ok {
@@ -139,7 +139,7 @@ func (s *Server) registerDocflowWrite() {
 			return fail(err)
 		}
 		s.log.Info("article created", "id", id)
-		return text(fmt.Sprintf("Статья «%s» создана: #%d, черновик. Посмотреть: rx_kb_article.", in.Title, id)), nil, nil
+		return text(fmt.Sprintf("Статья «%s» создана: #%d. Посмотреть: rx_kb_article.", in.Title, id)), nil, nil
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
