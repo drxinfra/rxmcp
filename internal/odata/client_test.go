@@ -3,8 +3,11 @@ package odata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -122,5 +125,66 @@ func TestClientGetsCookieWhenMissing(t *testing.T) {
 	}
 	if _, err := cl.List(t.Context(), "IUsers", Query{Top: 1}); err != nil {
 		t.Fatalf("без файла куки: %v", err)
+	}
+}
+
+// Параллельные запросы на истёкшей куке: продление одно, все запросы проходят.
+// RX при каждом новом входе гасит предыдущую сессию, поэтому лишние продления
+// давали 401 «через раз».
+func TestClientRenewsOnceUnderConcurrency(t *testing.T) {
+	var mu sync.Mutex
+	valid := "S0"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond) // чтобы запросы действительно пересекались
+		mu.Lock()
+		ok := false
+		if c, err := r.Cookie("sungero_client"); err == nil && c.Value == valid {
+			ok = true
+		}
+		mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"value":[]}`))
+	}))
+	defer srv.Close()
+	var renews atomic.Int64
+	cookie := "sungero_client=STALE"
+	cl, err := New(Options{
+		BaseURL: srv.URL + "/odata",
+		Auth:    "cookie",
+		CookieFunc: func() (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return cookie, nil
+		},
+		CookieRenew: func(context.Context) error {
+			n := renews.Add(1)
+			time.Sleep(20 * time.Millisecond) // вход через провайдера не мгновенный
+			mu.Lock()
+			valid = fmt.Sprintf("S%d", n)
+			cookie = "sungero_client=" + valid
+			mu.Unlock()
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var failed atomic.Int64
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := cl.List(t.Context(), "IUsers", Query{Top: 1}); err != nil {
+				failed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if failed.Load() != 0 || renews.Load() != 1 {
+		t.Fatalf("неудачных запросов %d, продлений %d (ждали 0 и 1)", failed.Load(), renews.Load())
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -31,6 +32,7 @@ type Client struct {
 	cookieFn   func() (string, error)
 	cookieSave func(string) error
 	cookieNew  func(context.Context) error
+	renewMu    sync.Mutex // одно продление куки за раз на весь клиент
 	renewed    atomic.Int64
 	tokenFn    func(context.Context) (string, error)
 	http       *http.Client
@@ -149,7 +151,7 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 	// Кука истекла: берём новую через сессию провайдера и повторяем запрос один раз.
-	if rerr := c.cookieNew(req.Context()); rerr != nil {
+	if rerr := c.renewCookie(req.Context(), req.Header.Get("Cookie")); rerr != nil {
 		fmt.Fprintf(os.Stderr, "rxmcp: новую куку получить не удалось: %v\n", rerr)
 		return resp, nil
 	}
@@ -170,6 +172,34 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 		c.absorb(resp)
 	}
 	return resp, err
+}
+
+// renewCookie получает новую куку, но не чаще, чем нужно. Параллельные запросы получают
+// 401 одновременно, и раньше каждый сам входил заново. Каждый новый вход RX делает
+// недействительной куку предыдущего, поэтому часть повторов снова получала 401, «через раз».
+// Теперь продление идёт под мьютексом, а перед ним сверяется кука в файле с той, что ушла
+// в запросе (sent): если она уже другая, её только что обновил соседний запрос или другой
+// процесс rxmcp с тем же каталогом настроек, и достаточно повторить запрос с ней.
+func (c *Client) renewCookie(ctx context.Context, sent string) error {
+	c.renewMu.Lock()
+	defer c.renewMu.Unlock()
+	if c.cookieFn != nil {
+		// sent пустой, когда куки не было вовсе: тогда хватит того, что она появилась.
+		if cur, err := c.cookieFn(); err == nil && cur != "" && cur != sent {
+			if Debug {
+				fmt.Fprintln(os.Stderr, "rxmcp: кука уже обновлена другим запросом, повторяю с ней")
+			}
+			return nil
+		}
+	}
+	if err := c.cookieNew(ctx); err != nil {
+		return err
+	}
+	c.renewed.Add(1)
+	if Debug {
+		fmt.Fprintln(os.Stderr, "rxmcp: получена новая кука через сессию провайдера")
+	}
+	return nil
 }
 
 // absorb сохраняет куку, которую RX выдал в ответ. Сессия RX бывает скользящей: сервер
@@ -259,7 +289,7 @@ func (c *Client) setAuth(r *http.Request) error {
 			v, err := c.cookieFn()
 			// Куки ещё нет (первый запуск, logout файла куки), а сессия провайдера есть: получаем.
 			if err != nil && c.cookieNew != nil {
-				if rerr := c.cookieNew(r.Context()); rerr == nil {
+				if rerr := c.renewCookie(r.Context(), ""); rerr == nil {
 					v, err = c.cookieFn()
 				}
 			}
