@@ -495,7 +495,8 @@ func serve(httpMode bool) error {
 	if err != nil {
 		return err
 	}
-	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: helpClient})
+	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: helpClient,
+		StateDir: auth.Dir(), StateKey: stateKey(cfg)})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	mode := "read-only"
@@ -856,4 +857,17 @@ func docs(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("rxmcp docs: неизвестная команда %q (есть index, search, topic, status)", sub)
+}
+
+// stateKey ключ отметок сервера: хост RX и логин, чтобы разные стенды и учётки
+// в одном каталоге настроек не путались.
+func stateKey(cfg *config.Config) string {
+	host := cfg.URL
+	if u, err := url.Parse(cfg.URL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	if cfg.Login != "" {
+		return host + "-" + cfg.Login
+	}
+	return fmt.Sprintf("%s-%d", host, cfg.UserID)
 }

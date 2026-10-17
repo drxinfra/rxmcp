@@ -172,6 +172,10 @@ type AssignmentFilter struct {
 	Notices bool
 	Subject string
 	Limit   int
+	// CreatedSince только пришедшие начиная с этого момента.
+	CreatedSince *time.Time
+	// DueBefore только со сроком раньше этого момента.
+	DueBefore *time.Time
 }
 
 // MyAssignments список моих заданий.
@@ -204,6 +208,12 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 	}
 	if fl.Subject != "" {
 		parts = append(parts, "contains(Subject,"+odata.Quote(fl.Subject)+")")
+	}
+	if fl.CreatedSince != nil {
+		parts = append(parts, "Created ge "+fl.CreatedSince.UTC().Format(time.RFC3339))
+	}
+	if fl.DueBefore != nil {
+		parts = append(parts, "Deadline lt "+fl.DueBefore.UTC().Format(time.RFC3339))
 	}
 	sel := "Id,Subject,Status,Importance,Deadline,Created,Modified,IsRead"
 	if !fl.Notices {
@@ -306,6 +316,8 @@ type TaskFilter struct {
 	Status  string
 	Subject string
 	Limit   int
+	// ModifiedSince только изменённые начиная с этого момента (в том числе завершённые).
+	ModifiedSince *time.Time
 }
 
 // ListTasks задачи.
@@ -333,6 +345,9 @@ func (s *Service) ListTasks(ctx context.Context, fl TaskFilter) ([]Task, *int64,
 	}
 	if fl.Subject != "" {
 		parts = append(parts, "contains(Subject,"+odata.Quote(fl.Subject)+")")
+	}
+	if fl.ModifiedSince != nil {
+		parts = append(parts, "Modified ge "+fl.ModifiedSince.UTC().Format(time.RFC3339))
 	}
 	page, err := s.c.List(ctx, "ITasks", odata.Query{
 		Filter:  strings.Join(parts, " and "),

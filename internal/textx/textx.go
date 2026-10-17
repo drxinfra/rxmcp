@@ -16,14 +16,19 @@ import (
 	"golang.org/x/text/encoding/charmap"
 )
 
-// Extract возвращает текст и признак того, что формат поддержан.
-// ext без точки, в нижнем регистре. Если ext пустой, формат угадывается по содержимому.
+// Extract возвращает текст документа. ext без точки, в нижнем регистре; если он
+// пустой, формат угадывается по содержимому (Sniff). PDF без текстового слоя
+// возвращает ErrScanned, картинка ErrImage: такие документы читаются картинками
+// (PDFImages, DocumentImage), текст с них снимает сама модель.
 func Extract(data []byte, ext string) (string, error) {
 	if len(data) == 0 {
 		return "", errors.New("пустое тело")
 	}
 	if ext == "" {
-		ext = sniff(data)
+		ext = Sniff(data)
+	}
+	if ImageExt(ext) {
+		return "", ErrImage
 	}
 	switch ext {
 	case "docx", "docm", "dotx":
@@ -39,7 +44,8 @@ func Extract(data []byte, ext string) (string, error) {
 	case "rtf":
 		return rtf(plain(data)), nil
 	case "pdf":
-		return "", errors.New("pdf: извлечение текста в этой версии не поддерживается; попросите docx-версию или откройте документ в RX")
+		txt, _, err := PDFText(data)
+		return txt, err
 	case "doc", "xls", "ppt":
 		return "", fmt.Errorf("%s: старый бинарный формат Office не поддерживается", ext)
 	case "zip":
@@ -50,11 +56,23 @@ func Extract(data []byte, ext string) (string, error) {
 	if looksText(data) {
 		return plain(data), nil
 	}
-	return "", fmt.Errorf("формат %q не поддерживается (умею docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf)", ext)
+	return "", fmt.Errorf("формат %q не поддерживается (умею docx, xlsx, pptx, pdf, txt, md, csv, json, xml, html, rtf и картинки)", ext)
 }
 
-func sniff(data []byte) string {
+// ErrImage документ это картинка: текст из неё снимает модель по DocumentImage.
+var ErrImage = errors.New("документ это изображение")
+
+// Sniff угадывает формат по первым байтам, когда у версии нет расширения.
+func Sniff(data []byte) string {
 	switch {
+	case bytes.HasPrefix(data, []byte("\xFF\xD8\xFF")):
+		return "jpg"
+	case bytes.HasPrefix(data, []byte("\x89PNG")):
+		return "png"
+	case bytes.HasPrefix(data, []byte("II*\x00")), bytes.HasPrefix(data, []byte("MM\x00*")):
+		return "tif"
+	case bytes.HasPrefix(data, []byte("GIF8")):
+		return "gif"
 	case bytes.HasPrefix(data, []byte("PK\x03\x04")):
 		return "zip"
 	case bytes.HasPrefix(data, []byte("%PDF")):

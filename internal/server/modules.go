@@ -330,6 +330,17 @@ type commentTicketIn struct {
 	Text string `json:"text" jsonschema:"текст комментария, обычный текст; виден всем участникам доски"`
 }
 
+type editCommentIn struct {
+	TicketID  int64  `json:"ticket_id" jsonschema:"числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board"`
+	CommentID int64  `json:"comment_id" jsonschema:"Id комментария: число после # в блоке «Комментарии» в rx_ticket"`
+	Text      string `json:"text" jsonschema:"новый текст комментария целиком, обычный текст; заменяет прежний"`
+}
+
+type deleteCommentIn struct {
+	TicketID  int64 `json:"ticket_id" jsonschema:"числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board"`
+	CommentID int64 `json:"comment_id" jsonschema:"Id комментария: число после # в блоке «Комментарии» в rx_ticket"`
+}
+
 // ticketComments дописывает к карточке блок комментариев. Сбой чтения комментариев
 // карточку не роняет: модель получает карточку и причину, почему комментариев нет.
 func (s *Server) ticketComments(ctx context.Context, t *rx.Ticket) string {
@@ -411,7 +422,7 @@ func (s *Server) registerBoardWrite() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_comment_ticket",
-		Description: "Добавить комментарий к карточке agile-доски от имени пользователя. Комментарий виден всем участникам доски; изменить или удалить его этим сервером нельзя. Используйте, чтобы записать ход работы или ответить в обсуждении; поля карточки меняет rx_update_ticket, существующие комментарии показывает rx_ticket. Нужен числовой Id карточки из rx_tickets или rx_board. Перед вызовом покажите пользователю текст комментария.",
+		Description: "Добавить комментарий к карточке agile-доски от имени пользователя. Комментарий виден всем участникам доски; поправить свой комментарий можно через rx_edit_comment, удалить через rx_delete_comment. Используйте, чтобы записать ход работы или ответить в обсуждении; поля карточки меняет rx_update_ticket, существующие комментарии показывает rx_ticket. Нужен числовой Id карточки из rx_tickets или rx_board. Перед вызовом покажите пользователю текст комментария.",
 		Annotations: rw("Комментарий к карточке", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in commentTicketIn) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(in.Text) == "" {
@@ -437,6 +448,51 @@ func (s *Server) registerBoardWrite() {
 			out += "\n" + s.svc.F.Comments(cs)
 		}
 		return text(out), nil, nil
+	})
+
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name:        "rx_edit_comment",
+		Description: "Исправить текст своего комментария к карточке agile-доски: новый текст целиком заменяет прежний. Чужие комментарии не меняет. Нужны Id карточки и Id комментария: комментарии с Id показывает rx_ticket (строка «#Id · время · автор»). Добавить новый комментарий: rx_comment_ticket, удалить: rx_delete_comment. Перед вызовом покажите пользователю прежний и новый текст.",
+		Annotations: rw("Исправить комментарий", false),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in editCommentIn) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(in.Text) == "" {
+			return fail(errors.New("пустой текст: чтобы убрать комментарий, удалите его через rx_delete_comment"))
+		}
+		t, c, label, err := s.ownComment(ctx, in.TicketID, in.CommentID)
+		if err != nil {
+			return fail(err)
+		}
+		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Заменить текст комментария #%d на карточке %s «%s»?\nБыло: %s\nСтанет: %s", c.ID, label, t.Name, oneLine(c.Text), oneLine(in.Text))); err != nil || !ok {
+			return declined(err)
+		}
+		if err := s.svc.UpdateTicketComment(ctx, t, c.ID, in.Text); err != nil {
+			return fail(err)
+		}
+		s.log.Info("ticket comment updated", "ticket", t.ID, "comment", c.ID)
+		out := fmt.Sprintf("Комментарий #%d на карточке %s исправлен.", c.ID, label)
+		if cs, err := s.svc.TicketComments(ctx, t); err == nil && len(cs) > 0 {
+			out += "\n" + s.svc.F.Comments(cs)
+		}
+		return text(out), nil, nil
+	})
+
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name:        "rx_delete_comment",
+		Description: "Удалить свой комментарий к карточке agile-доски, как кнопка «Удалить» на доске: комментарий пропадает у всех участников. Чужие комментарии не удаляет. Нужны Id карточки и Id комментария из rx_ticket. Исправить текст вместо удаления: rx_edit_comment. Перед вызовом покажите пользователю, какой комментарий будет удалён.",
+		Annotations: rw("Удалить комментарий", true),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in deleteCommentIn) (*mcp.CallToolResult, any, error) {
+		t, c, label, err := s.ownComment(ctx, in.TicketID, in.CommentID)
+		if err != nil {
+			return fail(err)
+		}
+		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Удалить комментарий #%d на карточке %s «%s»: %s?", c.ID, label, t.Name, oneLine(c.Text))); err != nil || !ok {
+			return declined(err)
+		}
+		if err := s.svc.DeleteTicketComment(ctx, t, c.ID); err != nil {
+			return fail(err)
+		}
+		s.log.Info("ticket comment deleted", "ticket", t.ID, "comment", c.ID)
+		return text(fmt.Sprintf("Комментарий #%d на карточке %s удалён.", c.ID, label)), nil, nil
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
@@ -632,4 +688,39 @@ func checkHours(plan, fact *float64) error {
 // hours печатает часы без лишних нулей: 4 ч, 1.5 ч.
 func hours(h float64) string {
 	return strconv.FormatFloat(h, 'f', -1, 64) + " ч"
+}
+
+// ownComment находит комментарий карточки и проверяет, что он пользователя.
+// RX сам решает, кому можно править, но чужое этот сервер не трогает даже там,
+// где права позволили бы (у администратора доски).
+func (s *Server) ownComment(ctx context.Context, ticketID, commentID int64) (*rx.Ticket, *rx.Comment, string, error) {
+	t, err := s.svc.TicketByID(ctx, ticketID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	label := t.UID
+	if label == "" {
+		label = fmt.Sprintf("#%d", t.ID)
+	}
+	c, err := s.svc.FindTicketComment(ctx, t, commentID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	me, err := s.svc.WhoAmI(ctx)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if c.Author != nil && c.Author.ID != 0 && c.Author.ID != me.ID {
+		return nil, nil, "", fmt.Errorf("комментарий #%d написал %s, а не вы: чужие комментарии rxmcp не меняет и не удаляет", c.ID, c.Author.Name)
+	}
+	return t, c, label, nil
+}
+
+// oneLine текст в одну строку для формы подтверждения, не длиннее 200 символов.
+func oneLine(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > 200 {
+		return string(r[:200]) + "…"
+	}
+	return s
 }

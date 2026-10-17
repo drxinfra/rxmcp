@@ -96,7 +96,8 @@ Cookie лежит отдельным файлом и перечитываетс�
 - `rx_whoami` — кто я в RX.
 - `rx_my_assignments` — задания в работе, просроченные, непрочитанные, выполненные; уведомления.
 - `rx_get_assignment`, `rx_get_task`, `rx_list_tasks` — карточки с перепиской, вложениями и заданиями.
-- `rx_find_documents`, `rx_get_document`, `rx_get_document_text` — поиск, карточка, текст версии (docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf).
+- `rx_whats_new` — что нового с прошлого раза: пришедшие задания и уведомления, что горит сегодня, какие мои задачи завершились.
+- `rx_find_documents`, `rx_get_document`, `rx_get_document_text` — поиск, карточка, текст версии (docx, xlsx, pptx, pdf, txt, md, csv, json, xml, html, rtf). Сканы и документы-картинки приходят изображениями страниц, текст с них читает сам помощник.
 - `rx_find_employees` — найти сотрудника, чтобы адресовать задачу.
 - База знаний: `rx_kb_areas`, `rx_kb_search`, `rx_kb_article` (статья в markdown).
 - Agile-доски: `rx_boards`, `rx_board`, `rx_tickets`, `rx_ticket`.
@@ -108,7 +109,8 @@ Cookie лежит отдельным файлом и перечитываетс�
 
 - `rx_create_ticket` — карточка на доске: колонка, срок, приоритет, план и факт в часах, теги, исполнители, вложения.
 - `rx_update_ticket` — изменить карточку (в том числе план и факт в часах), перенести её в другую колонку, добавить вложения: ссылку, документ RX по Id или файл с диска (до 20 МБ). Поля, которые не передали, остаются как были, карточка остаётся на своём месте в колонке.
-- `rx_comment_ticket` — добавить комментарий к карточке. Существующие комментарии с авторами и временем показывает `rx_ticket`.
+- `rx_comment_ticket` — добавить комментарий к карточке. Существующие комментарии с Id, авторами и временем показывает `rx_ticket`.
+- `rx_edit_comment`, `rx_delete_comment` — исправить или удалить свой комментарий. Чужие не трогает.
 - `rx_delete_tickets` — удалить карточки с доски, как удаление в интерфейсе доски: карточка получает статус Deleted (до 100 за раз).
 - `rx_create_column` — колонка на доске: название, место, финальная, лимит карточек. Без места встаёт перед «Выполнено».
 - `rx_complete_assignment` — выполнить задание или принять работы (результат подбирается по типу задания).
@@ -178,7 +180,7 @@ go test ./...
 
 ## Лицензия
 
-Apache-2.0. Directum RX — продукт Directum; проект с вендором не связан, торговые знаки принадлежат правообладателям.
+Apache-2.0. Текст из PDF извлекается копией библиотеки [ledongthuc/pdf](https://github.com/ledongthuc/pdf) (BSD-3-Clause) с правками, она лежит в `internal/thirdparty/pdf`. Directum RX — продукт Directum; проект с вендором не связан, торговые знаки принадлежат правообладателям.
 
 
 [![Directum RX MCP (rxmcp) MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/drxinfra/rxmcp/badges/card.svg)](https://glama.ai/mcp/servers/drxinfra/rxmcp)

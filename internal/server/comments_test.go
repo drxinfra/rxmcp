@@ -18,8 +18,9 @@ func TestTicketComments(t *testing.T) {
 	comments := []map[string]any{
 		{"Id": 1, "EntityId": 5, "Text": "первый", "Status": "Active", "Time": "2026-09-29T08:51:19Z", "Author": map[string]any{"Id": 7, "Name": "Иванов И."}},
 		{"Id": 2, "EntityId": 5, "Text": "удалённый", "Status": "Closed", "Time": "2026-09-29T09:00:00Z"},
+		{"Id": 4, "EntityId": 5, "Text": "чужой", "Status": "Active", "Time": "2026-09-29T10:00:00Z", "Author": map[string]any{"Id": 8, "Name": "Петров П."}},
 	}
-	var created map[string]any
+	var created, updated, deleted map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -34,6 +35,18 @@ func TestTicketComments(t *testing.T) {
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"value": comments})
+		case strings.HasSuffix(r.URL.Path, "/IUsers"):
+			json.NewEncoder(w).Encode(map[string]any{"value": []any{map[string]any{"Id": 7, "Name": "Иванов И.", "Login": map[string]any{"LoginName": "ivanov"}}}})
+		case strings.HasSuffix(r.URL.Path, "/TeamsCommonAPI/UpdateComment"):
+			b, _ := io.ReadAll(r.Body)
+			json.Unmarshal(b, &updated)
+			comments[0]["Text"] = updated["comment"]
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(r.URL.Path, "/TeamsCommonAPI/DeleteComment"):
+			b, _ := io.ReadAll(r.Body)
+			json.Unmarshal(b, &deleted)
+			comments[0]["Status"] = "Closed"
+			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/TeamsCommonAPI/CreateComment"):
 			b, _ := io.ReadAll(r.Body)
 			json.Unmarshal(b, &created)
@@ -54,7 +67,7 @@ func TestTicketComments(t *testing.T) {
 		return res.Content[0].(*mcp.TextContent).Text
 	}
 	out := call("rx_ticket", map[string]any{"id": 5})
-	if !strings.Contains(out, "Комментарии (1;") || !strings.Contains(out, "первый") || !strings.Contains(out, "Иванов И.") {
+	if !strings.Contains(out, "Комментарии (2;") || !strings.Contains(out, "#1 · ") || !strings.Contains(out, "первый") || !strings.Contains(out, "Иванов И.") {
 		t.Errorf("в карточке нет комментариев:\n%s", out)
 	}
 	if strings.Contains(out, "удалённый") {
@@ -67,7 +80,27 @@ func TestTicketComments(t *testing.T) {
 	if !strings.Contains(out, "Комментарий добавлен к карточке AB-1") || !strings.Contains(out, "готово") {
 		t.Errorf("ответ: %s", out)
 	}
-	if _, ok := toolNames(t, connect(t, false, srv.URL+"/odata"))["rx_comment_ticket"]; ok {
-		t.Error("комментирование видно без RXMCP_ALLOW_WRITE")
+	out = call("rx_edit_comment", map[string]any{"ticket_id": 5, "comment_id": 1, "text": "первый, исправлен"})
+	if updated["commentId"] != float64(1) || updated["comment"] != "первый, исправлен" || updated["entityGuid"] == "" || updated["containerEntityId"] != float64(9) {
+		t.Errorf("UpdateComment: %v", updated)
+	}
+	if !strings.Contains(out, "исправлен") {
+		t.Errorf("ответ правки: %s", out)
+	}
+	if out = call("rx_edit_comment", map[string]any{"ticket_id": 5, "comment_id": 4, "text": "x"}); !strings.Contains(out, "Петров П., а не вы") {
+		t.Errorf("чужой комментарий: %s", out)
+	}
+	if out = call("rx_delete_comment", map[string]any{"ticket_id": 5, "comment_id": 2}); !strings.Contains(out, "нет комментария #2") {
+		t.Errorf("удалённый комментарий: %s", out)
+	}
+	out = call("rx_delete_comment", map[string]any{"ticket_id": 5, "comment_id": 1})
+	if deleted["commentId"] != float64(1) || deleted["appId"] == nil || !strings.Contains(out, "удалён") {
+		t.Errorf("DeleteComment: %v, ответ %s", deleted, out)
+	}
+	ro := toolNames(t, connect(t, false, srv.URL+"/odata"))
+	for _, n := range []string{"rx_comment_ticket", "rx_edit_comment", "rx_delete_comment"} {
+		if _, ok := ro[n]; ok {
+			t.Errorf("%s виден без RXMCP_ALLOW_WRITE", n)
+		}
 	}
 }
