@@ -82,6 +82,7 @@ func New(svc *rx.Service, opt Options) *Server {
 	}
 	if opt.AllowWrite {
 		s.registerWrite()
+		s.registerDocflowWrite()
 		s.registerBoardWrite()
 		if opt.OData != nil {
 			s.registerCatalogWrite()
@@ -413,7 +414,7 @@ func orDash(s string) string {
 
 type completeIn struct {
 	ID     int64  `json:"id" jsonschema:"Id задания"`
-	Result string `json:"result,omitempty" jsonschema:"результат: для простого задания Complete (по умолчанию), для приёмки Accepted (принять, по умолчанию) или ForRework (на доработку); можно по-русски: принять, на доработку, выполнено"`
+	Result string `json:"result,omitempty" jsonschema:"результат; по умолчанию стандартный для типа задания: простое Complete, приёмка Accepted, согласование Approved, ознакомление Acquainted, рассмотрение Explored или Informed. Можно по-русски: выполнено, принять, согласовать, с замечаниями, на доработку, ознакомлен. Варианты для задания показывает rx_get_assignment"`
 }
 
 type createTaskIn struct {
@@ -431,7 +432,7 @@ type createTaskIn struct {
 func (s *Server) registerWrite() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_complete_assignment",
-		Description: "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять (result=Accepted) или вернуть на доработку (result=ForRework). Без result берётся стандартный результат для типа задания. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано.",
+		Description: "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять или вернуть на доработку, согласовать документ (в том числе с замечаниями) или вернуть на доработку, отметить ознакомление, рассмотрение. Без result берётся стандартный результат для типа задания. Задания на подписание не выполняет: подпись ставится только в RX. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано.",
 		Annotations: rw("Выполнить задание", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in completeIn) (*mcp.CallToolResult, any, error) {
 		a, _, err := s.svc.GetAssignment(ctx, in.ID)

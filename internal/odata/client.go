@@ -425,12 +425,37 @@ func (c *Client) Abs(ctx context.Context, rawURL string) ([]byte, string, error)
 // Action вызывает действие модуля: POST {base}/{module}/{action} с JSON-параметрами.
 // Возвращает тело ответа (может быть пустым).
 func (c *Client) Action(ctx context.Context, module, action string, params map[string]any) ([]byte, error) {
-	payload, err := json.Marshal(params)
-	if err != nil {
-		return nil, err
+	return c.send(ctx, http.MethodPost, module+"/"+action, params)
+}
+
+// Create создаёт запись набора (POST {набор}) и возвращает её JSON. Нужен узким
+// инструментам вроде создания статьи базы знаний; произвольные записи сервер не создаёт.
+func (c *Client) Create(ctx context.Context, set string, body map[string]any) ([]byte, error) {
+	return c.send(ctx, http.MethodPost, set, body)
+}
+
+// Patch меняет поля записи (PATCH {набор}(Id)).
+func (c *Client) Patch(ctx context.Context, set string, id int64, body map[string]any) error {
+	_, err := c.send(ctx, http.MethodPatch, fmt.Sprintf("%s(%d)", set, id), body)
+	return err
+}
+
+// Delete удаляет запись (DELETE {набор}(Id)).
+func (c *Client) Delete(ctx context.Context, set string, id int64) error {
+	_, err := c.send(ctx, http.MethodDelete, fmt.Sprintf("%s(%d)", set, id), nil)
+	return err
+}
+
+func (c *Client) send(ctx context.Context, method, path string, params map[string]any) ([]byte, error) {
+	var body io.Reader
+	if params != nil || method == http.MethodPost {
+		payload, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(payload)
 	}
-	path := module + "/" + action
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/"+path, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, c.base+"/"+path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +470,7 @@ func (c *Client) Action(ctx context.Context, module, action string, params map[s
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	c.debug("POST", path, resp.StatusCode, len(data))
+	c.debug(method, path, resp.StatusCode, len(data))
 	if Debug && resp.StatusCode >= 300 {
 		b := data
 		if len(b) > 600 {
@@ -454,7 +479,7 @@ func (c *Client) Action(ctx context.Context, module, action string, params map[s
 		fmt.Fprintf(os.Stderr, "rxmcp: тело ответа: %s\n", string(b))
 	}
 	if resp.StatusCode >= 300 {
-		return nil, &Error{Status: resp.StatusCode, Method: "POST", Path: path, Detail: detail(data)}
+		return nil, &Error{Status: resp.StatusCode, Method: method, Path: path, Detail: detail(data)}
 	}
 	return data, nil
 }

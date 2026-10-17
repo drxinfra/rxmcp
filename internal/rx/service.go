@@ -556,34 +556,63 @@ func (a *Assignment) Kind() string {
 	return strings.TrimSuffix(t, "Dto")
 }
 
+// assignmentKind что известно о стандартном типе задания: имя по-русски и допустимые
+// результаты, первый из них по умолчанию. SimpleAssignment и ReviewAssignment проверены
+// вживую; остальные взяты из метаданных модулей вендора (Docflow, RecordManagement)
+// версии 25.2 и на прикладных доработках могут отличаться.
+type assignmentKind struct {
+	ru      string
+	results []string
+}
+
+var assignmentKinds = map[string]assignmentKind{
+	"SimpleAssignment":                {"простое задание", []string{"Complete"}},
+	"ReviewAssignment":                {"приёмка работ", []string{"Accepted", "ForRework"}},
+	"Notice":                          {"уведомление", nil},
+	"ApprovalAssignment":              {"согласование", []string{"Approved", "WithSuggestions", "ForRevision"}},
+	"FreeApprovalAssignment":          {"свободное согласование", []string{"Approved", "ForRework"}},
+	"FreeApprovalReworkAssignment":    {"доработка после свободного согласования", []string{"Reworked"}},
+	"ApprovalReworkAssignment":        {"доработка после согласования", []string{"ForReapproving"}},
+	"ApprovalCheckingAssignment":      {"проверка в согласовании", []string{"Accept", "ForRework"}},
+	"ApprovalSimpleAssignment":        {"задание в согласовании", []string{"Complete"}},
+	"ApprovalExecutionAssignment":     {"исполнение в согласовании", []string{"Complete", "ForRevision"}},
+	"ApprovalSendingAssignment":       {"отправка контрагенту", []string{"Complete", "ForRevision"}},
+	"ApprovalPrintingAssignment":      {"печать", []string{"Execute", "ForRevision"}},
+	"ApprovalSigningAssignment":       {"подписание", nil},
+	"AcquaintanceAssignment":          {"ознакомление", []string{"Acquainted"}},
+	"AcquaintanceFinishAssignment":    {"завершение ознакомления", []string{"Complete"}},
+	"DocumentReviewAssignment":        {"рассмотрение документа", []string{"Informed", "DocsRework"}},
+	"ReviewManagerAssignment":         {"рассмотрение руководителем", []string{"Explored", "ForRework"}},
+	"ReviewDraftResolutionAssignment": {"рассмотрение проекта резолюции", []string{"Informed", "ForExecution"}},
+}
+
+var resultRu = map[string]string{
+	"Complete": "выполнено", "Accepted": "принять", "ForRework": "на доработку", "ForRevision": "на доработку",
+	"Approved": "согласовать", "WithSuggestions": "согласовать с замечаниями", "Reworked": "доработано",
+	"ForReapproving": "на повторное согласование", "Accept": "принять", "Execute": "выполнено",
+	"Acquainted": "ознакомлен", "Informed": "принято к сведению", "Explored": "рассмотрено",
+	"DocsRework": "документы на доработку", "ForExecution": "на исполнение",
+}
+
 // KindRu человеческое имя типа задания.
 func (a *Assignment) KindRu() string {
-	switch a.Kind() {
-	case "SimpleAssignment":
-		return "простое задание"
-	case "ReviewAssignment":
-		return "приёмка работ"
-	case "Notice":
-		return "уведомление"
-	case "":
+	if k, ok := assignmentKinds[a.Kind()]; ok {
+		return k.ru
+	}
+	if a.Kind() == "" {
 		return "задание"
 	}
 	return a.Kind()
 }
 
-// Результаты, которые платформа принимает для стандартных типов заданий (проверено вживую).
-var assignmentResults = map[string][]string{
-	"SimpleAssignment": {"Complete"},
-	"ReviewAssignment": {"Accepted", "ForRework"},
-}
-
-var resultRu = map[string]string{"Complete": "выполнено", "Accepted": "принять", "ForRework": "на доработку"}
-
 // Results допустимые результаты для типа задания (пусто, если тип нестандартный).
-func (a *Assignment) Results() []string { return assignmentResults[a.Kind()] }
+func (a *Assignment) Results() []string { return assignmentKinds[a.Kind()].results }
 
 // ResultsHint строка для карточки: что передавать в result.
 func (a *Assignment) ResultsHint() string {
+	if a.Kind() == "ApprovalSigningAssignment" {
+		return "подписание выполняется только в RX: результат «Подписать» ставит подпись, а rxmcp подписи не ставит"
+	}
 	r := a.Results()
 	if len(r) == 0 {
 		return "результат зависит от прикладного типа задания, посмотрите варианты в RX"
@@ -595,24 +624,56 @@ func (a *Assignment) ResultsHint() string {
 	return strings.Join(parts, ", ")
 }
 
-// normalizeResult приводит синонимы к значению перечисления RX.
+// Синонимы по смыслу; конкретное значение перечисления зависит от типа задания
+// («на доработку» это ForRework у приёмки и ForRevision у согласования по регламенту).
+var resultIntents = map[string][]string{
+	"positive": {"", "default", "ok", "да", "complete", "completed", "done", "выполнено", "выполнить", "готово",
+		"accept", "accepted", "принять", "принято", "приём", "прием", "approve", "approved", "согласовать", "согласовано", "согласен",
+		"acquainted", "ознакомлен", "ознакомиться", "ознакомилась", "informed", "к сведению", "принять к сведению",
+		"explored", "рассмотрено", "рассмотреть", "reworked", "доработано", "доработал", "execute", "напечатано"},
+	"rework":      {"forrework", "forrevision", "rework", "на доработку", "доработка", "вернуть", "reject", "отклонить", "не согласовано"},
+	"suggestions": {"withsuggestions", "с замечаниями", "согласовать с замечаниями", "замечания"},
+}
+
+// normalizeResult приводит синонимы к значению перечисления RX для типа задания.
+// Точные имена значений проходят как есть.
 func normalizeResult(kind, in string) string {
 	v := strings.ToLower(strings.TrimSpace(in))
-	switch v {
-	case "", "default", "ok", "да":
-		switch kind {
-		case "ReviewAssignment":
-			return "Accepted"
-		case "SimpleAssignment":
-			return "Complete"
+	allowed := assignmentKinds[kind].results
+	for _, a := range allowed {
+		if strings.EqualFold(a, v) {
+			return a
 		}
-		return ""
-	case "complete", "completed", "done", "выполнено", "выполнить", "готово":
+	}
+	intent := ""
+	for name, words := range resultIntents {
+		for _, w := range words {
+			if v == w {
+				intent = name
+			}
+		}
+	}
+	switch intent {
+	case "positive":
+		if len(allowed) > 0 {
+			return allowed[0]
+		}
+		switch v {
+		case "", "default", "ok", "да":
+			return ""
+		case "accept", "accepted", "принять", "принято", "приём", "прием":
+			return "Accepted"
+		}
 		return "Complete"
-	case "accept", "accepted", "принять", "принято", "приём", "прием":
-		return "Accepted"
-	case "forrework", "rework", "на доработку", "доработка", "вернуть", "reject":
+	case "rework":
+		for _, a := range allowed {
+			if a == "ForRework" || a == "ForRevision" || a == "DocsRework" {
+				return a
+			}
+		}
 		return "ForRework"
+	case "suggestions":
+		return "WithSuggestions"
 	}
 	return strings.TrimSpace(in)
 }
@@ -620,6 +681,9 @@ func normalizeResult(kind, in string) string {
 // CompleteAssignment выполняет задание. Результат обязателен для RX: без него сервер отвечает 404.
 // Если result пустой, берётся стандартный для типа задания; синонимы вроде «принять» приводятся к значениям RX.
 func (s *Service) CompleteAssignment(ctx context.Context, a *Assignment, result string) (string, error) {
+	if a.Kind() == "ApprovalSigningAssignment" {
+		return "", errors.New(a.ResultsHint())
+	}
 	res := normalizeResult(a.Kind(), result)
 	if res == "" {
 		return "", fmt.Errorf("для задания типа %s нужен явный result: %s", a.KindRu(), a.ResultsHint())

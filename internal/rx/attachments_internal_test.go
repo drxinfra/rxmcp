@@ -33,3 +33,27 @@ func TestSecretPathRefused(t *testing.T) {
 		t.Error(".sshfoo это не .ssh")
 	}
 }
+
+func TestNormalizeResultByKind(t *testing.T) {
+	for _, c := range []struct{ kind, in, want string }{
+		{"SimpleAssignment", "", "Complete"},
+		{"ReviewAssignment", "", "Accepted"},
+		{"ReviewAssignment", "на доработку", "ForRework"},
+		{"ApprovalAssignment", "", "Approved"},
+		{"ApprovalAssignment", "на доработку", "ForRevision"},
+		{"ApprovalAssignment", "с замечаниями", "WithSuggestions"},
+		{"FreeApprovalAssignment", "согласовать", "Approved"},
+		{"FreeApprovalAssignment", "не согласовано", "ForRework"},
+		{"AcquaintanceAssignment", "ознакомлен", "Acquainted"},
+		{"ReviewManagerAssignment", "", "Explored"},
+		{"ApprovalCheckingAssignment", "accept", "Accept"},
+		{"ApprovalAssignment", "approved", "Approved"},
+		{"CustomAssignment", "принять", "Accepted"},
+		{"CustomAssignment", "", ""},
+		{"CustomAssignment", "MyResult", "MyResult"},
+	} {
+		if got := normalizeResult(c.kind, c.in); got != c.want {
+			t.Errorf("%s %q: %q, ждали %q", c.kind, c.in, got, c.want)
+		}
+	}
+}
