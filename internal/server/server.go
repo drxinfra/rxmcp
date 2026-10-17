@@ -29,6 +29,7 @@ type Options struct {
 	OData        *odata.Client // прямой доступ к OData для каталога сущностей; nil = без него
 	StateDir     string        // каталог для отметки rx_whats_new; пусто = отметка не хранится
 	StateKey     string        // стенд и пользователь, чтобы отметки разных RX не смешивались
+	Host         string        // хост RX: в названии и описании сервера, чтобы помощник различал системы
 }
 
 // Server обёртка над mcp.Server.
@@ -53,13 +54,20 @@ func New(svc *rx.Service, opt Options) *Server {
 		opt.Logger = slog.Default()
 	}
 	s := &Server{svc: svc, opt: opt, log: opt.Logger}
+	title, instr := "Directum RX", instructions
+	if opt.Host != "" {
+		// Подключено несколько систем (rx и rx-rxc-test): у каждой свои данные,
+		// и помощник должен понимать, какую спрашивать.
+		title = "Directum RX · " + opt.Host
+		instr = "Система: " + opt.Host + ". Если подключено несколько Directum RX, данные этой системы берите только её инструментами.\n" + instructions
+	}
 	s.MCP = mcp.NewServer(&mcp.Implementation{
 		Name:       "rxmcp",
-		Title:      "Directum RX",
+		Title:      title,
 		Version:    opt.Version,
 		WebsiteURL: "https://drxinfra.ru/rxmcp",
 	}, &mcp.ServerOptions{
-		Instructions: instructions,
+		Instructions: instr,
 		Logger:       opt.Logger,
 	})
 	s.MCP.AddReceivingMiddleware(s.updateMiddleware)

@@ -118,7 +118,12 @@ func run(args []string) error {
 		for _, a := range args {
 			if a == "--apply" {
 				// Прописать в клиенты, ничего не спрашивая: удобно, когда профиль уже есть.
-				return registerClients("rx", true, nil)
+				cfg, _ := config.FromEnv()
+				name := "rx"
+				if cfg != nil {
+					name = clientName(cfg.URL)
+				}
+				return registerClients(name, true, nil)
 			}
 			return fmt.Errorf("install: неизвестный аргумент %q (есть --apply)", a)
 		}
@@ -496,7 +501,7 @@ func serve(httpMode bool) error {
 		return err
 	}
 	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: helpClient,
-		StateDir: auth.Dir(), StateKey: stateKey(cfg)})
+		StateDir: auth.Dir(), StateKey: stateKey(cfg), Host: hostOf(cfg.URL)})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	mode := "read-only"
@@ -705,8 +710,16 @@ func install() error {
 		exe = "rxmcp"
 	}
 	exe, _ = filepath.Abs(exe)
+	name, entry, ccEnv := "rx", map[string]any{"command": exe}, ""
+	if home := profileHome(); home != "" {
+		if cfg, err := config.FromEnv(); err == nil {
+			name = clientName(cfg.URL)
+		}
+		entry["env"] = map[string]any{"RXMCP_HOME": home}
+		ccEnv = " -e RXMCP_HOME=" + home
+	}
 	cfgJSON, _ := json.MarshalIndent(map[string]any{
-		"mcpServers": map[string]any{"rx": map[string]any{"command": exe}},
+		"mcpServers": map[string]any{name: entry},
 	}, "", "  ")
 	paths := []string{}
 	for _, t := range clientConfigs() {
@@ -723,12 +736,12 @@ func install() error {
   %s
 
 Claude Code:
-  claude mcp add rx --scope user -- %s
+  claude mcp add %s --scope user%s -- %s
 
 После правки перезапустите Claude Desktop или Cursor (Claude Code подхватывает сам).
 Запись (карточки, задачи, выполнение заданий): rxmcp config set RXMCP_ALLOW_WRITE=1
 Инструкция с картинками: https://drxinfra.ru/rxmcp#start
-`, config.FilePath(), cfgJSON, strings.Join(paths, "\n  "), exe)
+`, config.FilePath(), cfgJSON, strings.Join(paths, "\n  "), name, ccEnv, exe)
 	return nil
 }
 
@@ -857,6 +870,13 @@ func docs(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("rxmcp docs: неизвестная команда %q (есть index, search, topic, status)", sub)
+}
+
+func hostOf(u string) string {
+	if p, err := url.Parse(u); err == nil && p.Hostname() != "" {
+		return p.Hostname()
+	}
+	return u
 }
 
 // stateKey ключ отметок сервера: хост RX и логин, чтобы разные стенды и учётки

@@ -234,7 +234,48 @@ func setup(args []string) error {
 		return nil
 	}
 	fmt.Println()
+	if f.name == "rx" {
+		f.name = clientName(rxURL)
+	}
 	return registerClients(f.name, f.yes || !tty, in)
+}
+
+// profileHome каталог настроек, если он задан явно (RXMCP_HOME), иначе пусто.
+// Явный каталог значит «вторая система»: его надо передать серверу в конфиге клиента,
+// иначе клиент запустит rxmcp с профилем по умолчанию.
+func profileHome() string {
+	h := os.Getenv("RXMCP_HOME")
+	if h == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(h); err == nil {
+		return abs
+	}
+	return h
+}
+
+// clientName имя сервера в MCP-клиенте. Для профиля по умолчанию «rx», для
+// отдельного профиля «rx-<два первых слова хоста>», например rx-rxc-test: так вторая
+// система не перезапишет первую.
+func clientName(rxURL string) string {
+	if profileHome() == "" {
+		return "rx"
+	}
+	host := rxURL
+	if u, err := url.Parse(rxURL); err == nil && u.Host != "" {
+		host = u.Hostname()
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) > 2 {
+		parts = parts[:2]
+	}
+	name := "rx-" + strings.Join(parts, "-")
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
+			return r
+		}
+		return '-'
+	}, strings.ToLower(name))
 }
 
 // normalizeRX приводит адрес к корню сервиса интеграции.
@@ -288,16 +329,24 @@ func registerClients(name string, auto bool, in *bufio.Reader) error {
 		return err
 	}
 	exe, _ = filepath.Abs(exe)
+	home := profileHome()
+	if home != "" {
+		fmt.Printf("Отдельный профиль %s: сервер будет называться «%s», запись «rx» не трогаю.\n", home, name)
+	}
 
 	done := []string{}
 	// Claude Code: через свой CLI, чтобы не лезть в ~/.claude.json руками.
 	if cc, err := exec.LookPath("claude"); err == nil {
 		if auto || yes(in, "Прописать в Claude Code?", true) {
 			_ = exec.Command(cc, "mcp", "remove", name, "--scope", "user").Run()
-			out, err := exec.Command(cc, "mcp", "add", name, "--scope", "user", "--", exe).CombinedOutput()
+			args := []string{"mcp", "add", name, "--scope", "user"}
+			if home != "" {
+				args = append(args, "-e", "RXMCP_HOME="+home)
+			}
+			out, err := exec.Command(cc, append(args, "--", exe)...).CombinedOutput()
 			if err != nil {
 				fmt.Printf("Claude Code: не получилось (%v): %s\n", err, strings.TrimSpace(string(out)))
-				fmt.Printf("Сделайте вручную: claude mcp add %s --scope user -- %s\n", name, exe)
+				fmt.Printf("Сделайте вручную: claude %s -- %s\n", strings.Join(args, " "), exe)
 			} else {
 				done = append(done, "Claude Code")
 			}
@@ -310,7 +359,7 @@ func registerClients(name string, auto bool, in *bufio.Reader) error {
 		if !auto && !yes(in, "Прописать в "+t.title+"?", true) {
 			continue
 		}
-		if err := mergeMCPConfig(t.path, name, exe); err != nil {
+		if err := mergeMCPConfig(t.path, name, exe, home); err != nil {
 			fmt.Printf("%s: %v\n", t.title, err)
 			continue
 		}
@@ -344,7 +393,7 @@ func clientConfigs() []clientTarget {
 }
 
 // mergeMCPConfig добавляет сервер в конфиг клиента, не теряя остальное содержимое.
-func mergeMCPConfig(path, name, exe string) error {
+func mergeMCPConfig(path, name, exe, home string) error {
 	cfg := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
 		if err := json.Unmarshal(b, &cfg); err != nil {
@@ -357,7 +406,11 @@ func mergeMCPConfig(path, name, exe string) error {
 	if servers == nil {
 		servers = map[string]any{}
 	}
-	servers[name] = map[string]any{"command": exe}
+	entry := map[string]any{"command": exe}
+	if home != "" {
+		entry["env"] = map[string]any{"RXMCP_HOME": home}
+	}
+	servers[name] = entry
 	cfg["mcpServers"] = servers
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

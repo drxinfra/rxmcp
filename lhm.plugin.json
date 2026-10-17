@@ -150,7 +150,7 @@
     },
     {
       "name": "rx_comment_ticket",
-      "description": "Добавить комментарий к карточке agile-доски от имени пользователя. Комментарий виден всем участникам доски; изменить или удалить его этим сервером нельзя. Используйте, чтобы записать ход работы или ответить в обсуждении; поля карточки меняет rx_update_ticket, существующие комментарии показывает rx_ticket. Нужен числовой Id карточки из rx_tickets или rx_board. Перед вызовом покажите пользователю текст комментария.",
+      "description": "Добавить комментарий к карточке agile-доски от имени пользователя. Комментарий виден всем участникам доски; поправить свой комментарий можно через rx_edit_comment, удалить через rx_delete_comment. Используйте, чтобы записать ход работы или ответить в обсуждении; поля карточки меняет rx_update_ticket, существующие комментарии показывает rx_ticket. Нужен числовой Id карточки из rx_tickets или rx_board. Перед вызовом покажите пользователю текст комментария.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -431,6 +431,35 @@
       }
     },
     {
+      "name": "rx_delete_comment",
+      "description": "Удалить свой комментарий к карточке agile-доски, как кнопка «Удалить» на доске: комментарий пропадает у всех участников. Чужие комментарии не удаляет. Нужны Id карточки и Id комментария из rx_ticket. Исправить текст вместо удаления: rx_edit_comment. Перед вызовом покажите пользователю, какой комментарий будет удалён.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board"
+          },
+          "comment_id": {
+            "type": "integer",
+            "description": "Id комментария: число после # в блоке «Комментарии» в rx_ticket"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "comment_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Удалить комментарий"
+      }
+    },
+    {
       "name": "rx_delete_tickets",
       "description": "Удалить карточки с agile-доски так же, как это делает кнопка удаления в интерфейсе: карточка уходит с доски и получает статус Deleted. Вернуть её этим сервером нельзя. Нужны числовые Id карточек из rx_board или rx_tickets, не коды; до 100 за вызов. Перед вызовом перечислите пользователю, какие карточки будут удалены.",
       "inputSchema": {
@@ -481,6 +510,40 @@
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Описание сущности"
+      }
+    },
+    {
+      "name": "rx_edit_comment",
+      "description": "Исправить текст своего комментария к карточке agile-доски: новый текст целиком заменяет прежний. Чужие комментарии не меняет. Нужны Id карточки и Id комментария: комментарии с Id показывает rx_ticket (строка «#Id · время · автор»). Добавить новый комментарий: rx_comment_ticket, удалить: rx_delete_comment. Перед вызовом покажите пользователю прежний и новый текст.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board"
+          },
+          "comment_id": {
+            "type": "integer",
+            "description": "Id комментария: число после # в блоке «Комментарии» в rx_ticket"
+          },
+          "text": {
+            "type": "string",
+            "description": "новый текст комментария целиком, обычный текст; заменяет прежний"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "comment_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Исправить комментарий"
       }
     },
     {
@@ -641,7 +704,7 @@
     },
     {
       "name": "rx_get_document_text",
-      "description": "Текст версии документа, по умолчанию последней. Используйте, чтобы пересказать документ или найти в нём условия, суммы, сроки. Читает docx, xlsx, pptx, txt, md, csv, json, xml, html, rtf; PDF и сканы не читает и сообщит об этом. Длинный текст обрезается по max_chars, продолжение запрашивается через offset. Id документа берётся из rx_find_documents. Только чтение.",
+      "description": "Текст версии документа, по умолчанию последней. Используйте, чтобы пересказать документ или найти в нём условия, суммы, сроки. Читает docx, xlsx, pptx, pdf с текстовым слоем, txt, md, csv, json, xml, html, rtf. Скан (pdf без текста) и документ-картинку (jpg, png, tiff) возвращает изображениями страниц: прочитайте текст с них сами; по умолчанию 3 страницы, дальше page_from. Длинный текст обрезается по max_chars, продолжение через offset. Если в тексте pdf не хватает страниц или важны печати и подписи, повторите с as_images=true. Id документа берётся из rx_find_documents. Только чтение.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -660,6 +723,18 @@
           "offset": {
             "type": "integer",
             "description": "с какого символа продолжить, если текст обрезан"
+          },
+          "page_from": {
+            "type": "integer",
+            "description": "для скана и as_images: с какой страницы показывать картинки, с 1"
+          },
+          "pages": {
+            "type": "integer",
+            "description": "для скана и as_images: сколько страниц картинками, по умолчанию 3, максимум 10"
+          },
+          "as_images": {
+            "type": "boolean",
+            "description": "true = отдать страницы PDF картинками, даже если текстовый слой есть; нужно, когда часть страниц сканы или важны печати и подписи"
           }
         },
         "required": [
@@ -1270,6 +1345,34 @@
       }
     },
     {
+      "name": "rx_whats_new",
+      "description": "Что нового в Directum RX с прошлого раза: пришедшие задания и уведомления, что со сроком до конца дня (включая просроченное), какие мои задачи завершились. Используйте для вопросов «что нового», «что пришло, пока меня не было», в начале рабочего дня. По умолчанию показывает всё с прошлого вызова rx_whats_new и сдвигает отметку на текущий момент; since задаёт начало явно, peek=true не сдвигает отметку. Подробности по строке: rx_get_assignment, rx_get_task. Только чтение RX.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "description": "с какого момента: 24h, 3d, 1w, today, дата 2026-10-15 или 15.10.2026; по умолчанию с прошлого вызова rx_whats_new, а при первом вызове за сутки"
+          },
+          "peek": {
+            "type": "boolean",
+            "description": "true = только посмотреть, не сдвигая отметку прошлого просмотра"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "сколько строк в каждом разделе, по умолчанию 20, максимум 100"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Что нового"
+      }
+    },
+    {
       "name": "rx_whoami",
       "description": "Кто текущий пользователь в Directum RX: имя, Id, должность, подразделение. Вызывайте первым, если неизвестно, от чьего имени идёт работа. Параметров нет, ничего не меняет.",
       "inputSchema": {
@@ -1284,7 +1387,7 @@
       }
     }
   ],
-  "version": "0.9.1",
+  "version": "0.10.1",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
   "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",
