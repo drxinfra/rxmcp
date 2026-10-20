@@ -29,3 +29,16 @@ func TestWordsFilter(t *testing.T) {
 		t.Errorf("short: %s", got)
 	}
 }
+
+func TestNormStatus(t *testing.T) {
+	a := []string{"in_process", "overdue", "unread", "completed", "all"}
+	for in, want := range map[string]string{
+		"": "", "overdue": "overdue", "in_process, overdue": "in_process", "Overdue, Unread": "in_process",
+		"In Progress": "in_process", "done": "completed", "in_process,completed": "all", "all, overdue": "all",
+		"срочное": "срочное",
+	} {
+		if got := normStatus(in, a...); got != want {
+			t.Errorf("normStatus(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

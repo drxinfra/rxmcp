@@ -191,7 +191,7 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 	parts := []string{fmt.Sprintf("Performer/Id eq %d", me.ID)}
 	order := "Deadline asc,Created desc"
 	now := time.Now().UTC().Format(time.RFC3339)
-	switch strings.ToLower(strings.TrimSpace(fl.Status)) {
+	switch normStatus(fl.Status, "in_process", "overdue", "unread", "completed", "all") {
 	case "", "in_process", "inprocess", "active":
 		parts = append(parts, "Status eq 'InProcess'")
 	case "overdue":
@@ -204,7 +204,7 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 	case "all":
 		order = "Created desc"
 	default:
-		return nil, nil, fmt.Errorf("status: допустимо in_process, overdue, unread, completed, all")
+		return nil, nil, fmt.Errorf("status %q: укажите одно значение из in_process, overdue, unread, completed, all или не указывайте (в работе)", fl.Status)
 	}
 	if fl.Subject != "" {
 		parts = append(parts, "contains(Subject,"+odata.Quote(fl.Subject)+")")
@@ -330,7 +330,7 @@ func (s *Service) ListTasks(ctx context.Context, fl TaskFilter) ([]Task, *int64,
 		}
 		parts = append(parts, fmt.Sprintf("Author/Id eq %d", me.ID))
 	}
-	switch strings.ToLower(strings.TrimSpace(fl.Status)) {
+	switch normStatus(fl.Status, "in_process", "completed", "aborted", "draft", "all") {
 	case "", "in_process", "inprocess", "active":
 		parts = append(parts, "Status eq 'InProcess'")
 	case "completed":
@@ -341,7 +341,7 @@ func (s *Service) ListTasks(ctx context.Context, fl TaskFilter) ([]Task, *int64,
 		parts = append(parts, "Status eq 'Draft'")
 	case "all":
 	default:
-		return nil, nil, fmt.Errorf("status: допустимо in_process, completed, aborted, draft, all")
+		return nil, nil, fmt.Errorf("status %q: укажите одно значение из in_process, completed, aborted, draft, all или не указывайте (в работе)", fl.Status)
 	}
 	if fl.Subject != "" {
 		parts = append(parts, "contains(Subject,"+odata.Quote(fl.Subject)+")")

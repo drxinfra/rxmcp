@@ -1,6 +1,7 @@
 package rx
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -67,4 +68,51 @@ func wordsFilter(q string, fields ...string) string {
 		}
 	}
 	return strings.Join(and, " and ")
+}
+
+// statusSynonyms приводит то, что пишут модели, к значениям status инструментов.
+var statusSynonyms = map[string]string{
+	"inprocess": "in_process", "in_progress": "in_process", "inprogress": "in_process", "active": "in_process",
+	"open": "in_process", "pending": "in_process", "в_работе": "in_process",
+	"done": "completed", "closed": "completed", "finished": "completed", "complete": "completed",
+	"expired": "overdue", "late": "overdue", "просрочено": "overdue", "просроченные": "overdue",
+	"new": "unread", "непрочитанные": "unread", "any": "all", "все": "all",
+}
+
+// normStatus разбирает status, который маленькие модели пишут вольно: «in_process, overdue»,
+// «In Progress», «done». Несколько значений сводятся к самому широкому: просроченные и
+// непрочитанные входят в работающие, иначе — все. Возвращает "" для пустого и исходную
+// строку, если ничего не распознано (тогда вызывающий сообщит допустимые значения).
+// Раньше «in_process, overdue» давало ошибку, и модель повторяла тот же вызов до лимита шагов.
+func normStatus(s string, allowed ...string) string {
+	var got []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return strings.ContainsRune(",;|/+", r) }) {
+		w = strings.ReplaceAll(strings.TrimSpace(w), " ", "_")
+		if v, ok := statusSynonyms[w]; ok {
+			w = v
+		}
+		for _, a := range allowed {
+			if w == a && !slices.Contains(got, w) {
+				got = append(got, w)
+			}
+		}
+	}
+	switch {
+	case len(got) == 0:
+		return strings.TrimSpace(s)
+	case len(got) == 1:
+		return got[0]
+	case slices.Contains(got, "all"):
+		return "all"
+	}
+	inWork := true
+	for _, g := range got {
+		if g != "in_process" && g != "overdue" && g != "unread" {
+			inWork = false
+		}
+	}
+	if inWork && slices.Contains(allowed, "in_process") {
+		return "in_process"
+	}
+	return "all"
 }
