@@ -20,6 +20,9 @@ jobs:
           go-version-file: go.mod
       - run: hack/leakcheck.sh
       - run: go test ./...
+      # Гейт выпуска: с известной исправимой уязвимостью HIGH/CRITICAL релиз не публикуется.
+      - run: hack/install-trivy.sh && echo "$PWD/bin" >> "$GITHUB_PATH"
+      - run: hack/vulncheck.sh
       - run: hack/build.sh "${GITHUB_REF_NAME}"
       # Подпись происхождения: архив собран этим workflow из этого коммита.
       # Проверка у пользователя: gh attestation verify <архив> --repo drxinfra/rxmcp
@@ -36,6 +39,8 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
   image:
+    # Образ публикуется только после гейта уязвимостей в build.
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

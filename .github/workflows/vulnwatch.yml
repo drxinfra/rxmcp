@@ -1,0 +1,44 @@
+name: vulnwatch
+# Ежедневная проверка уже выпущенного: новые CVE появляются после релиза. Сканирует бинарник
+# последнего релиза и образ latest; при находке открывает (или дополняет) issue с меткой
+# security, чтобы выпустить исправление, не дожидаясь следующей фичи.
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: hack/install-trivy.sh && echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: Бинарник последнего релиза
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --json tagName -q .tagName)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          gh release download "$tag" -p "rxmcp-$tag-linux-amd64.tar.gz" -D /tmp/rel
+          tar -xzf /tmp/rel/*.tar.gz -C /tmp/rel
+      - name: Скан релиза и образа
+        id: scan
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          { hack/vulncheck.sh /tmp/rel/rxmcp-*/rxmcp && hack/vulncheck.sh ghcr.io/drxinfra/rxmcp:latest; } 2>&1 | tee /tmp/scan.txt
+      - name: Issue при находке
+        if: steps.scan.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          title="Уязвимости в выпущенном $TAG"
+          body=$(printf 'Ежедневный скан trivy нашёл HIGH/CRITICAL с исправлением в %s.\n\n```\n%s\n```\n\nОбычно лечится подъёмом Go в go.mod или модуля и выпуском патч-версии.' "$TAG" "$(tail -c 60000 /tmp/scan.txt)")
+          gh label create security --color B60205 2>/dev/null || true
+          n=$(gh issue list --label security --state open --search "$title in:title" --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$body"; else gh issue create --title "$title" --label security --body "$body"; fi
+          exit 1
