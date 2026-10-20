@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -194,6 +195,10 @@ func (s *Server) registerRead() {
 		Name:        "rx_whoami",
 		Description: "Кто текущий пользователь в Directum RX: имя, Id, должность, подразделение. Вызывайте первым, если неизвестно, от чьего имени идёт работа. Параметров нет, ничего не меняет.",
 		Annotations: ro("Кто я в RX"),
+		// Явное пустое properties: без него схема из пустой структуры приходит как
+		// {"type":"object"}, и Ollama с шаблоном на Jinja (GigaChat и другие GGUF) отвечает
+		// 400 «properties must be an object» на любой запрос со списком инструментов.
+		InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyIn) (*mcp.CallToolResult, any, error) {
 		me, err := s.svc.WhoAmI(ctx)
 		if err != nil {

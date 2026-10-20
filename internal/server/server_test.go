@@ -207,3 +207,19 @@ func TestBoardWriteToolsAndConfirm(t *testing.T) {
 		t.Errorf("без формы ждали запрос в RX: asked=%v %q", asked, out)
 	}
 }
+
+// У каждого инструмента в схеме есть properties-объект: Ollama с шаблонами на Jinja
+// (GigaChat и другие GGUF) строит по схемам парсер и без properties отвечает 400 на весь запрос.
+func TestInputSchemasHaveProperties(t *testing.T) {
+	cs := connect(t, true, "http://127.0.0.1:1/odata")
+	for name, tl := range toolNames(t, cs) {
+		b, _ := json.Marshal(tl.InputSchema)
+		var sc map[string]any
+		if err := json.Unmarshal(b, &sc); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, ok := sc["properties"].(map[string]any); !ok {
+			t.Errorf("%s: в схеме нет properties-объекта: %s", name, b)
+		}
+	}
+}
