@@ -35,6 +35,14 @@ func fakeRX(t *testing.T) *httptest.Server {
 				return
 			}
 			w.WriteHeader(204)
+		case "IOfficialDocuments":
+			w.WriteHeader(204) // среди официальных регламента нет
+		case "IElectronicDocuments":
+			if f := r.URL.Query().Get("$filter"); strings.Contains(f, "DocumentKind") || !strings.Contains(f, "'парол'") {
+				w.WriteHeader(204)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"value": []any{map[string]any{"Id": 34, "Name": "Регламент смены паролей"}}})
 		case "IAssignments(5)":
 			json.NewEncoder(w).Encode(map[string]any{"@odata.type": "#X.Workflow.ISimpleAssignmentDto", "Id": 5, "Subject": "Проверить", "Status": "InProcess"})
 		default:
@@ -75,5 +83,22 @@ func TestToolsEndToEnd(t *testing.T) {
 	res, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "rx_get_assignment", Arguments: map[string]any{"id": "abc"}})
 	if err == nil && (res == nil || !res.IsError) {
 		t.Error("строка вместо id должна отклоняться")
+	}
+}
+
+// Простой документ (регламент файлом) не находится среди официальных: поиск по названию
+// повторяется среди всех документов без условия вида, и ответ об этом говорит.
+func TestFindDocumentsFallsBackToAllTypes(t *testing.T) {
+	cs := connect(t, false, fakeRX(t).URL+"/odata")
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "rx_find_documents",
+		Arguments: map[string]any{"query": "паролей", "kind": "Регламент"}})
+	if err != nil || res.IsError {
+		t.Fatalf("%v %+v", err, res)
+	}
+	txt := res.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{"найдено среди всех документов", "без условия вида «Регламент»", "#34 Регламент смены паролей"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("нет %q:\n%s", want, txt)
+		}
 	}
 }

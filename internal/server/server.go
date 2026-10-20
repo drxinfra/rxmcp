@@ -282,17 +282,35 @@ func (s *Server) registerRead() {
 		Description: "Поиск документов в Directum RX по карточке: название, вид, автор, регистрационный номер, даты создания, состояние. По содержимому не ищет. По умолчанию среди официальных документов (договоры, письма, записки, приказы); all_types=true добавляет простые документы без регистрации. Нужно хотя бы одно условие. Строка: #Id название · вид · номер · состояние · автор · дата. Дальше rx_get_document для карточки и rx_get_document_text для текста. Справочники и другие сущности ищите через rx_find_entity.",
 		Annotations: ro("Найти документы"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in findDocsIn) (*mcp.CallToolResult, any, error) {
-		items, total, err := s.svc.FindDocuments(ctx, rx.DocumentFilter{
+		fl := rx.DocumentFilter{
 			Query: in.Query, Kind: in.Kind, Author: in.Author, RegNumber: in.RegNumber,
 			CreatedFrom: in.CreatedFrom, CreatedTo: in.CreatedTo, State: in.State, AllTypes: in.AllTypes, Limit: in.Limit,
-		})
+		}
+		items, total, err := s.svc.FindDocuments(ctx, fl)
 		if err != nil {
 			return fail(err)
 		}
-		if len(items) == 0 {
-			return text("Документов по этим условиям не найдено (или нет прав на них)."), nil, nil
-		}
 		var b strings.Builder
+		// Пользователь не знает, официальный документ или простой: регламент, загруженный
+		// файлом, лежит среди простых. Если по названию среди официальных пусто, ищем среди
+		// всех документов; вид у простых документов не задан, поэтому его условие снимается.
+		if len(items) == 0 && !fl.AllTypes && strings.TrimSpace(fl.Query) != "" && fl.Author == "" && fl.RegNumber == "" && fl.State == "" {
+			fl.AllTypes, fl.Kind = true, ""
+			items, total, err = s.svc.FindDocuments(ctx, fl)
+			if err != nil {
+				return fail(err)
+			}
+			if len(items) > 0 {
+				b.WriteString("Среди официальных документов нет, найдено среди всех документов по названию")
+				if in.Kind != "" {
+					fmt.Fprintf(&b, " (без условия вида «%s»)", in.Kind)
+				}
+				b.WriteString(".\n")
+			}
+		}
+		if len(items) == 0 {
+			return text("Документов по этим условиям не найдено (или нет прав на них). Попробуйте одно-два слова из названия."), nil, nil
+		}
 		if total != nil && int(*total) > len(items) {
 			fmt.Fprintf(&b, "Документы: показано %d из %d, уточните условия\n", len(items), *total)
 		} else {
