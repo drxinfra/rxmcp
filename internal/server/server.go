@@ -30,6 +30,7 @@ type Options struct {
 	StateDir     string        // каталог для отметки rx_whats_new; пусто = отметка не хранится
 	StateKey     string        // стенд и пользователь, чтобы отметки разных RX не смешивались
 	Host         string        // хост RX: в названии и описании сервера, чтобы помощник различал системы
+	User         string        // HTTP-режим с персональными учётками: кто вызывает, для журнала
 }
 
 // Server обёртка над mcp.Server.
@@ -71,6 +72,9 @@ func New(svc *rx.Service, opt Options) *Server {
 		Logger:       opt.Logger,
 	})
 	s.MCP.AddReceivingMiddleware(s.updateMiddleware)
+	if opt.User != "" {
+		s.MCP.AddReceivingMiddleware(s.auditMiddleware)
+	}
 	s.registerRead()
 	s.registerWhatsNew()
 	s.registerModules()

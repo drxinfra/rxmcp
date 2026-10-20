@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -66,6 +70,37 @@ func (s *Server) updateMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		if t := s.takeUpdate(); t != "" {
 			r.Content = append(r.Content, &mcp.TextContent{Text: "Служебное от rxmcp, передайте пользователю: " + t})
 		}
+		return res, err
+	}
+}
+
+// auditMiddleware журнал вызовов в HTTP-режиме с персональными учётками: кто, какой
+// инструмент, какие параметры (только имена, без значений: в значениях бывают
+// персональные данные), успех и время. Нужен ИБ, чтобы отвечать на вопрос «кто что делал».
+func (s *Server) auditMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if method != "tools/call" {
+			return next(ctx, method, req)
+		}
+		start := time.Now()
+		res, err := next(ctx, method, req)
+		name, keys := "", []string{}
+		if cr, ok := req.(*mcp.CallToolRequest); ok && cr.Params != nil {
+			name = cr.Params.Name
+			var args map[string]any
+			if json.Unmarshal(cr.Params.Arguments, &args) == nil {
+				for k := range args {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+			}
+		}
+		failed := err != nil
+		if r, ok := res.(*mcp.CallToolResult); ok && r != nil && r.IsError {
+			failed = true
+		}
+		s.log.Info("tool call", "user", s.opt.User, "tool", name, "params", strings.Join(keys, ","),
+			"error", failed, "ms", time.Since(start).Milliseconds())
 		return res, err
 	}
 }

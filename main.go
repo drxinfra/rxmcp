@@ -14,15 +14,18 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
+	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/drxinfra/rxmcp/internal/auth"
 	"github.com/drxinfra/rxmcp/internal/config"
 	"github.com/drxinfra/rxmcp/internal/help"
+	"github.com/drxinfra/rxmcp/internal/jwtverify"
 	"github.com/drxinfra/rxmcp/internal/odata"
 	"github.com/drxinfra/rxmcp/internal/rx"
 	"github.com/drxinfra/rxmcp/internal/server"
@@ -492,6 +495,9 @@ func serve(httpMode bool) error {
 	if httpMode && cfg.HTTPAddr == "" {
 		return errors.New("serve --http: задайте RXMCP_HTTP_ADDR и RXMCP_HTTP_SECRET")
 	}
+	if httpMode && cfg.HTTPAuth == "oidc" {
+		return serveUsers(cfg, log)
+	}
 	helpSrc, err := helpSource(cfg)
 	if err != nil {
 		return err
@@ -890,4 +896,82 @@ func stateKey(cfg *config.Config) string {
 		return host + "-" + cfg.Login
 	}
 	return fmt.Sprintf("%s-%d", host, cfg.UserID)
+}
+
+// serveUsers HTTP-режим с персональными учётками. Клиент (чат с входом через
+// Keycloak) передаёт токен вошедшего пользователя в Authorization. rxmcp проверяет его
+// по ключам провайдера, берёт логин из токена и с этим же токеном идёт в сервис
+// интеграции RX: у каждого пользователя ровно его права, своей учётки у сервера нет.
+//
+// Сервер собирается на каждый запрос (режим без сессий): токен короткоживущий и
+// меняется, а держать его в сессии значило бы ходить в RX с просроченным.
+func serveUsers(cfg *config.Config, log *slog.Logger) error {
+	mux, err := usersHandler(cfg, log)
+	if err != nil {
+		return err
+	}
+	hs := &http.Server{Addr: cfg.HTTPAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(sctx)
+	}()
+	mode := "read-only"
+	if cfg.AllowWrite {
+		mode = "read-write"
+	}
+	log.Info("rxmcp started", "version", version, "transport", "http", "auth", "oidc", "issuer", cfg.HTTPOIDCIssuer,
+		"addr", cfg.HTTPAddr, "path", "/mcp", "rx", cfg.ODataURL(), "mode", mode)
+	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// usersHandler обработчик HTTP-режима с персональными учётками: /mcp под проверкой
+// токена и /healthz.
+func usersHandler(cfg *config.Config, log *slog.Logger) (http.Handler, error) {
+	helpSrc, err := helpSource(cfg)
+	if err != nil {
+		return nil, err
+	}
+	v := &jwtverify.Verifier{Issuer: cfg.HTTPOIDCIssuer, Audience: cfg.HTTPOIDCAudience, UserClaim: cfg.HTTPUserClaim}
+	verify := func(ctx context.Context, token string, _ *http.Request) (*mcpauth.TokenInfo, error) {
+		c, err := v.Verify(ctx, token)
+		if err != nil {
+			log.Warn("token rejected", "reason", err.Error())
+			return nil, mcpauth.ErrInvalidToken
+		}
+		if cfg.HTTPRequireRole != "" && !slices.Contains(c.Roles, cfg.HTTPRequireRole) {
+			log.Warn("token rejected", "user", c.Username, "reason", "no role "+cfg.HTTPRequireRole)
+			return nil, mcpauth.ErrInvalidToken
+		}
+		return &mcpauth.TokenInfo{UserID: c.Username, Expiration: c.Expires, Extra: map[string]any{"token": token}}, nil
+	}
+	newServer := func(r *http.Request) *mcp.Server {
+		ti := mcpauth.TokenInfoFromContext(r.Context())
+		if ti == nil {
+			return nil
+		}
+		token, _ := ti.Extra["token"].(string)
+		cl, err := odata.New(odata.Options{BaseURL: cfg.ODataURL(), Auth: "bearer", Token: token,
+			Timeout: cfg.Timeout, InsecureTLS: cfg.InsecureTLS, CAFile: cfg.CAFile})
+		if err != nil {
+			log.Error("odata client", "err", err)
+			return nil
+		}
+		svc := rx.New(cl, ti.UserID, 0, cfg.PageSize, cfg.MaxPageSize, rx.Formatter{Loc: cfg.Location()})
+		srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm,
+			MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: cl,
+			StateDir: auth.Dir(), StateKey: hostOf(cfg.URL) + "-" + ti.UserID, Host: hostOf(cfg.URL), User: ti.UserID})
+		return srv.MCP
+	}
+	h := mcp.NewStreamableHTTPHandler(newServer, &mcp.StreamableHTTPOptions{Stateless: true, Logger: log})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.Handle("/mcp", mcpauth.RequireBearerToken(verify, nil)(h))
+	return mux, nil
 }

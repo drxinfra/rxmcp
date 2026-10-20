@@ -52,6 +52,15 @@ type Config struct {
 	// HTTP-режим: адрес и общий секрет.
 	HTTPAddr   string
 	HTTPSecret string
+	// HTTPAuth как HTTP-режим пускает клиентов: secret (общий секрет, по умолчанию)
+	// или oidc (токен пользователя от провайдера, у каждого свои права в RX).
+	HTTPAuth string
+	// Провайдер, чьи токены принимаются в HTTP-режиме oidc (адрес realm у Keycloak),
+	// ожидаемая аудитория (aud или azp), поле с логином RX и роль, без которой не пускать.
+	HTTPOIDCIssuer   string
+	HTTPOIDCAudience string
+	HTTPUserClaim    string
+	HTTPRequireRole  string
 	// Адрес каталога справки, если она лежит не рядом с веб-клиентом.
 	HelpURL string
 	// Раз в сутки узнавать, не вышла ли новая версия rxmcp. RXMCP_UPDATE_CHECK=0 выключает.
@@ -109,6 +118,11 @@ func FromEnv() (*Config, error) {
 		TimeZone:         get("RXMCP_TZ"),
 		HTTPAddr:         get("RXMCP_HTTP_ADDR"),
 		HTTPSecret:       get("RXMCP_HTTP_SECRET"),
+		HTTPAuth:         strings.ToLower(firstNonEmpty(get("RXMCP_HTTP_AUTH"), "secret")),
+		HTTPOIDCIssuer:   strings.TrimRight(get("RXMCP_HTTP_OIDC_ISSUER"), "/"),
+		HTTPOIDCAudience: get("RXMCP_HTTP_OIDC_AUDIENCE"),
+		HTTPUserClaim:    firstNonEmpty(get("RXMCP_HTTP_USER_CLAIM"), "preferred_username"),
+		HTTPRequireRole:  get("RXMCP_HTTP_REQUIRE_ROLE"),
 		HelpURL:          get("RXMCP_HELP_URL"),
 		UpdateCheck:      !isFalse(get("RXMCP_UPDATE_CHECK")),
 	}
@@ -168,14 +182,33 @@ func (c *Config) Validate() error {
 		if c.OIDCIssuer == "" || c.OIDCClientID == "" {
 			return errors.New("RXMCP_AUTH=oidc требует RXMCP_OIDC_ISSUER и RXMCP_OIDC_CLIENT_ID")
 		}
+	case "passthrough":
+		// Своей учётки нет: в RX уходит токен пользователя из запроса.
+		if c.HTTPAuth != "oidc" || c.HTTPAddr == "" {
+			return errors.New("RXMCP_AUTH=passthrough работает только в HTTP-режиме с RXMCP_HTTP_AUTH=oidc и RXMCP_HTTP_ADDR")
+		}
 	default:
-		return fmt.Errorf("RXMCP_AUTH=%q: допустимо basic, header, bearer, cookie, oidc", c.Auth)
+		return fmt.Errorf("RXMCP_AUTH=%q: допустимо basic, header, bearer, cookie, oidc, passthrough", c.Auth)
 	}
 	if (c.Auth == "cookie" || c.Auth == "oidc" || c.Auth == "bearer") && c.Login == "" && c.UserID == 0 {
 		return fmt.Errorf("при RXMCP_AUTH=%s задайте RXMCP_LOGIN (логин в RX, чтобы найти пользователя) или RXMCP_USER_ID", c.Auth)
 	}
-	if c.HTTPAddr != "" && c.HTTPSecret == "" {
-		return errors.New("HTTP-режим требует RXMCP_HTTP_SECRET")
+	switch c.HTTPAuth {
+	case "secret":
+		if c.HTTPAddr != "" && c.HTTPSecret == "" {
+			return errors.New("HTTP-режим требует RXMCP_HTTP_SECRET")
+		}
+	case "oidc":
+		if c.HTTPOIDCIssuer == "" {
+			return errors.New("RXMCP_HTTP_AUTH=oidc требует RXMCP_HTTP_OIDC_ISSUER (адрес realm провайдера)")
+		}
+		if c.Auth != "passthrough" {
+			// Иначе все пользователи ходили бы в RX под одной учёткой сервера, и права
+			// пользователя в RX ничего бы не значили.
+			return errors.New("RXMCP_HTTP_AUTH=oidc требует RXMCP_AUTH=passthrough: в RX ходит токен пользователя")
+		}
+	default:
+		return fmt.Errorf("RXMCP_HTTP_AUTH=%q: допустимо secret или oidc", c.HTTPAuth)
 	}
 	return nil
 }
