@@ -9,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// База часовых поясов внутри бинарника: в образе FROM scratch и на части Windows её нет,
+	// и RXMCP_TZ молча не срабатывал — даты шли в UTC.
+	_ "time/tzdata"
 )
 
 // Config описывает подключение к RX и режим работы сервера.
@@ -159,6 +162,11 @@ func FromEnv() (*Config, error) {
 
 // Validate проверяет, что подключение к RX задано полностью.
 func (c *Config) Validate() error {
+	if c.TimeZone != "" {
+		if _, err := time.LoadLocation(c.TimeZone); err != nil {
+			return fmt.Errorf("RXMCP_TZ=%q: неизвестный часовой пояс, пример Europe/Moscow", c.TimeZone)
+		}
+	}
 	if c.URL == "" {
 		return errors.New("не задан адрес RX: выполните `rxmcp setup` или передайте RXMCP_URL (например https://rx.company.ru/Integration)")
 	}
