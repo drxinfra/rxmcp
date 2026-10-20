@@ -394,7 +394,7 @@ func (s *Service) FindDocuments(ctx context.Context, fl DocumentFilter) ([]Docum
 	}
 	var parts []string
 	if q := strings.TrimSpace(fl.Query); q != "" {
-		parts = append(parts, "contains(Name,"+odata.Quote(q)+")")
+		parts = append(parts, wordsFilter(q, "Name"))
 	}
 	if fl.Kind != "" {
 		if fl.AllTypes {
@@ -519,7 +519,9 @@ func (s *Service) FindEmployees(ctx context.Context, q string, includeInactive b
 	if q == "" {
 		return nil, errors.New("задайте фамилию или часть имени")
 	}
-	filter := "contains(Name," + odata.Quote(q) + ")"
+	// Каждое слово ищется в ФИО, должности или подразделении: «начальник закупок»
+	// находит начальника отдела закупок, «Иванова Анна» по-прежнему ищет по ФИО.
+	filter := wordsFilter(q, "Name", "JobTitle/Name", "Department/Name")
 	if !includeInactive {
 		filter += " and Status eq 'Active'"
 	}

@@ -387,7 +387,7 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_find_employees",
-		Description: "Найти сотрудников по фамилии или части имени: Id, должность, подразделение, почта. Используйте перед rx_create_simple_task, чтобы получить Id исполнителя, или чтобы узнать, кто есть кто. По умолчанию только действующие сотрудники; include_inactive=true добавляет закрытые записи. Только чтение.",
+		Description: "Найти сотрудников по фамилии, должности или подразделению (каждое слово запроса ищется в ФИО, должности и названии подразделения: «начальник закупок», «бухгалтерия», «Иванова Анна»): Id, должность, подразделение, почта. Используйте перед rx_create_simple_task, чтобы получить Id исполнителя, или чтобы узнать, кто есть кто. По умолчанию только действующие сотрудники; include_inactive=true добавляет закрытые записи. Только чтение.",
 		Annotations: ro("Найти сотрудника"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in findEmployeesIn) (*mcp.CallToolResult, any, error) {
 		items, err := s.svc.FindEmployees(ctx, in.Query, in.IncludeInactive, in.Limit)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,22 @@ func (f *fakeRX) has(sub string) bool {
 	defer f.mu.Unlock()
 	for _, c := range f.calls {
 		if strings.Contains(c, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasQuery был ли запрос к набору path с ровно таким $filter.
+func (f *fakeRX) hasQuery(path, filter string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		p, q, _ := strings.Cut(c, "?")
+		if !strings.HasSuffix(p, "/"+path) {
+			continue
+		}
+		if v, err := url.ParseQuery(q); err == nil && v.Get("$filter") == filter {
 			return true
 		}
 	}
@@ -125,7 +142,7 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "IElectronicDocuments":
 		jsonOut(w, coll(map[string]any{"Id": 300, "Name": "Договор №42"}))
 	case p == "IOfficialDocuments":
-		if strings.Contains(filter, "contains(Name,'Договор')") || strings.Contains(filter, "Created ge") {
+		if strings.Contains(filter, "contains(tolower(Name),'договор')") || strings.Contains(filter, "Created ge") {
 			jsonOut(w, coll(map[string]any{"Id": 300, "Name": "Договор №42", "RegistrationNumber": "42", "RegistrationDate": "2026-08-01T00:00:00Z", "LifeCycleState": "Active", "Modified": "2026-08-02T00:00:00Z", "HasVersions": true, "Author": map[string]any{"Id": 9, "Name": "Петров Пётр"}, "DocumentKind": map[string]any{"Id": 4, "Name": "Договор"}}))
 			return
 		}
@@ -213,7 +230,7 @@ func (f *fakeRX) modules(w http.ResponseWriter, r *http.Request, p, filter strin
 	case p == "IAreaOfExpertises":
 		jsonOut(w, coll(map[string]any{"Id": 115, "Name": "Общая область", "Status": "Active", "RootArticleId": 1, "RootArticleName": "Старт", "IsDefaultArea": true}))
 	case p == "IMemoArticles":
-		if strings.Contains(filter, "Areas/any(a: a/Area/Id eq 115)") || strings.Contains(filter, "contains(Name,'Оформ')") {
+		if strings.Contains(filter, "Areas/any(a: a/Area/Id eq 115)") || strings.Contains(filter, "contains(tolower(Name),'оформ')") {
 			jsonOut(w, coll(map[string]any{"Id": 2, "Name": "Оформление статьи\n", "LifeCycleState": "Active", "Modified": "2026-05-06T11:48:00+03:00", "HasVersions": true, "Author": map[string]any{"Id": 1, "Name": "Автор"}, "Areas": []any{map[string]any{"Area": map[string]any{"Id": 115, "Name": "Общая область"}}}}))
 			return true
 		}
@@ -255,7 +272,7 @@ func (f *fakeRX) modules(w http.ResponseWriter, r *http.Request, p, filter strin
 			"TeamMembers": []any{map[string]any{"Group": "Management", "Member": map[string]any{"Id": 268, "Name": "Руководитель"}}, map[string]any{"Group": "Members", "Member": map[string]any{"Id": 7, "Name": "Иванов Иван"}}},
 			"GatesDirRX":  []any{map[string]any{"PlanDate": "2026-06-01T00:00:00Z", "IsPassed": true, "ActualDate": "2026-06-02T00:00:00Z", "Gate": map[string]any{"Id": 1, "Name": "G1"}}}})
 	case p == "IProjectPlanRXs":
-		if strings.Contains(filter, "Project/Id eq 2") || strings.Contains(filter, "contains(Name,'План')") {
+		if strings.Contains(filter, "Project/Id eq 2") || strings.Contains(filter, "contains(tolower(Name),'план')") {
 			jsonOut(w, coll(map[string]any{"Id": 55, "Name": "План проекта", "LifeCycleState": "Draft", "Status": "Active", "Modified": "2026-09-09T17:04:00+03:00", "Project": map[string]any{"Id": 2, "Name": "Проект"}}))
 			return true
 		}

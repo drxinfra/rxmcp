@@ -321,3 +321,18 @@ func TestUpdateTicketKeepsHoursAndPlace(t *testing.T) {
 		t.Errorf("перенос ставит в начало новой колонки: %v", ref)
 	}
 }
+
+// Поиск сотрудника: каждое слово ищется в ФИО, должности и подразделении, слова через and.
+func TestFindEmployeesByJobAndDepartment(t *testing.T) {
+	f := newFake(t)
+	s := newSvc(t, f)
+	items, err := s.FindEmployees(context.Background(), "начальник  закупок", false, 5)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("find: %v %d", err, len(items))
+	}
+	want := "(contains(tolower(Name),'начальник') or contains(tolower(JobTitle/Name),'начальник') or contains(tolower(Department/Name),'начальник')) and " +
+		"(contains(tolower(Name),'закупок') or contains(tolower(JobTitle/Name),'закупок') or contains(tolower(Department/Name),'закупок')) and Status eq 'Active'"
+	if !f.hasQuery("IEmployees", want) {
+		t.Errorf("фильтр не тот, запросы: %v", f.calls)
+	}
+}

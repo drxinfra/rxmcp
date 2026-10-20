@@ -71,7 +71,7 @@ type ArticleFilter struct {
 func (s *Service) KBFindArticles(ctx context.Context, fl ArticleFilter) ([]Article, *int64, error) {
 	var parts []string
 	if q := strings.TrimSpace(fl.Query); q != "" {
-		parts = append(parts, "contains(Name,"+odata.Quote(q)+")")
+		parts = append(parts, wordsFilter(q, "Name"))
 	}
 	if fl.AreaID != 0 {
 		parts = append(parts, fmt.Sprintf("Areas/any(a: a/Area/Id eq %d)", fl.AreaID))
@@ -361,7 +361,7 @@ func (s *Service) Projects(ctx context.Context, fl ProjectFilter) ([]Project, *i
 		parts = append(parts, "Status eq 'Active'")
 	}
 	if q := strings.TrimSpace(fl.Query); q != "" {
-		parts = append(parts, "(contains(Name,"+odata.Quote(q)+") or contains(ShortName,"+odata.Quote(q)+"))")
+		parts = append(parts, wordsFilter(q, "Name", "ShortName"))
 	}
 	if fl.Manager != "" {
 		parts = append(parts, "contains(Manager/Name,"+odata.Quote(fl.Manager)+")")
@@ -430,7 +430,7 @@ type Plan struct {
 func (s *Service) FindPlans(ctx context.Context, q string, projectID int64, limit int) ([]Plan, *int64, error) {
 	var parts []string
 	if q = strings.TrimSpace(q); q != "" {
-		parts = append(parts, "contains(Name,"+odata.Quote(q)+")")
+		parts = append(parts, wordsFilter(q, "Name"))
 	}
 	if projectID != 0 {
 		parts = append(parts, fmt.Sprintf("Project/Id eq %d", projectID))
