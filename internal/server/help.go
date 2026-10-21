@@ -41,9 +41,9 @@ func (h *helpState) index() (*help.Index, string) {
 	}
 	if h.building {
 		if h.total > 0 {
-			return nil, fmt.Sprintf("Справка ещё скачивается со стенда: %d из %d статей. Повторите запрос через минуту.", h.done, h.total)
+			return nil, fmt.Sprintf("Справка ещё скачивается со стенда: %d из %d статей, будет готова через пару минут.", h.done, h.total) + helpLater
 		}
-		return nil, "Справка ещё скачивается со стенда. Повторите запрос через минуту."
+		return nil, "Справка ещё скачивается со стенда, будет готова через пару минут." + helpLater
 	}
 	ix, err := help.Load(h.src.Path)
 	if err == nil {
@@ -54,17 +54,22 @@ func (h *helpState) index() (*help.Index, string) {
 		return nil, "Индекс справки не читается: " + err.Error()
 	}
 	if h.lastErr != nil {
-		msg := "Справку не удалось скачать со стенда: " + h.lastErr.Error() + ". Адрес каталога справки можно задать явно: rxmcp config set RXMCP_HELP_URL=https://…/WebHelp/ru-RU, затем rxmcp docs index."
+		msg := "Справку не удалось скачать со стенда: " + h.lastErr.Error() + ". Адрес каталога справки можно задать явно: rxmcp config set RXMCP_HELP_URL=https://…/WebHelp/ru-RU, затем rxmcp docs index." + helpLater
 		h.lastErr = nil // следующая попытка начнётся со следующего вызова
 		return nil, msg
 	}
 	if h.src.Fetch == nil {
-		return nil, "Справка не проиндексирована. Выполните в терминале: rxmcp docs index"
+		return nil, "Справка не проиндексирована. Выполните в терминале: rxmcp docs index." + helpLater
 	}
 	h.building = true
 	go h.build()
-	return nil, "Справка этого стенда ещё не скачана. Начал скачивать её с " + h.src.Base + ": это разовая операция на несколько минут. Повторите запрос позже, остальные инструменты работают как обычно."
+	return nil, "Справка этого стенда ещё не скачана. Начал скачивать её с " + h.src.Base + ": это разовая операция на несколько минут, остальные инструменты работают как обычно." + helpLater
 }
+
+// helpLater дописывается к каждому ответу «справки пока нет». Раньше там было «повторите
+// запрос позже», и локальные модели (GigaChat 3.1, qwen3) повторяли вызов до лимита шагов, так
+// и не ответив. К тому же модели путают справку с внутренними документами компании.
+const helpLater = " Не вызывайте справку повторно в этом ответе: ответьте без неё или скажите пользователю, что справка появится через несколько минут. Внутренних регламентов, приказов и договоров компании в справке нет, они в документах: rx_find_documents, затем rx_get_document_text."
 
 func (h *helpState) build() {
 	ix, err := help.Crawl(context.Background(), h.src.Fetch, h.src.Base, 6, func(done, total int) {

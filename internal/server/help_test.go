@@ -119,3 +119,18 @@ func TestHelpUnavailable(t *testing.T) {
 	}
 	t.Fatalf("нет подсказки про адрес справки: %s", out)
 }
+
+// Пока справки нет, ответ не зовёт повторить вызов и отправляет к документам: иначе локальная
+// модель повторяла help_search до лимита шагов.
+func TestHelpUnavailableDoesNotInviteRetry(t *testing.T) {
+	cs := connectHelp(t, func(context.Context, string) ([]byte, string, error) {
+		return nil, "", errors.New("404")
+	})
+	for i := 0; i < 3; i++ {
+		txt := callText(t, cs, "rx_help_search", map[string]any{"query": "регламент"})
+		if strings.Contains(txt, "Повторите") || !strings.Contains(txt, "Не вызывайте справку повторно") || !strings.Contains(txt, "rx_find_documents") {
+			t.Errorf("вызов %d: %s", i+1, txt)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
