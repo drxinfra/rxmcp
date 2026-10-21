@@ -207,7 +207,7 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 		return nil, nil, fmt.Errorf("status %q: укажите одно значение из in_process, overdue, unread, completed, all или не указывайте (в работе)", fl.Status)
 	}
 	if fl.Subject != "" {
-		parts = append(parts, "contains(Subject,"+odata.Quote(fl.Subject)+")")
+		parts = append(parts, wordsFilter(fl.Subject, "Subject"))
 	}
 	if fl.CreatedSince != nil {
 		parts = append(parts, "Created ge "+fl.CreatedSince.UTC().Format(time.RFC3339))
@@ -344,7 +344,7 @@ func (s *Service) ListTasks(ctx context.Context, fl TaskFilter) ([]Task, *int64,
 		return nil, nil, fmt.Errorf("status %q: укажите одно значение из in_process, completed, aborted, draft, all или не указывайте (в работе)", fl.Status)
 	}
 	if fl.Subject != "" {
-		parts = append(parts, "contains(Subject,"+odata.Quote(fl.Subject)+")")
+		parts = append(parts, wordsFilter(fl.Subject, "Subject"))
 	}
 	if fl.ModifiedSince != nil {
 		parts = append(parts, "Modified ge "+fl.ModifiedSince.UTC().Format(time.RFC3339))
@@ -400,10 +400,10 @@ func (s *Service) FindDocuments(ctx context.Context, fl DocumentFilter) ([]Docum
 		if fl.AllTypes {
 			return nil, nil, errors.New("kind работает только среди официальных документов (all_types=false)")
 		}
-		parts = append(parts, "contains(DocumentKind/Name,"+odata.Quote(fl.Kind)+")")
+		parts = append(parts, wordsFilter(fl.Kind, "DocumentKind/Name"))
 	}
 	if fl.Author != "" {
-		parts = append(parts, "contains(Author/Name,"+odata.Quote(fl.Author)+")")
+		parts = append(parts, wordsFilter(fl.Author, "Author/Name"))
 	}
 	if fl.RegNumber != "" && !fl.AllTypes {
 		parts = append(parts, "RegistrationNumber eq "+odata.Quote(fl.RegNumber))

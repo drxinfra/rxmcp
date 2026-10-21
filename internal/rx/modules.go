@@ -80,7 +80,7 @@ func (s *Service) KBFindArticles(ctx context.Context, fl ArticleFilter) ([]Artic
 		parts = append(parts, "Tags/any(t: contains(t/Tag/Name,"+odata.Quote(fl.Tag)+"))")
 	}
 	if fl.Author != "" {
-		parts = append(parts, "contains(Author/Name,"+odata.Quote(fl.Author)+")")
+		parts = append(parts, wordsFilter(fl.Author, "Author/Name"))
 	}
 	if len(parts) == 0 {
 		return nil, nil, errors.New("задайте условие: query, area_id, tag или author")
@@ -364,7 +364,7 @@ func (s *Service) Projects(ctx context.Context, fl ProjectFilter) ([]Project, *i
 		parts = append(parts, wordsFilter(q, "Name", "ShortName"))
 	}
 	if fl.Manager != "" {
-		parts = append(parts, "contains(Manager/Name,"+odata.Quote(fl.Manager)+")")
+		parts = append(parts, wordsFilter(fl.Manager, "Manager/Name"))
 	}
 	if fl.Stage != "" {
 		parts = append(parts, "Stage eq "+odata.Quote(fl.Stage))
