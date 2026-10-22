@@ -16,6 +16,7 @@ import (
 
 	"github.com/drxinfra/rxmcp/internal/auth"
 	"github.com/drxinfra/rxmcp/internal/config"
+	"github.com/drxinfra/rxmcp/internal/secret"
 )
 
 // setup — единственная команда, которую человек выполняет руками.
@@ -25,7 +26,7 @@ import (
 
 type setupFlags struct {
 	url, login, authMode, tz, name string
-	write, noClients, yes          bool
+	write, noClients, yes, keyring bool
 }
 
 func setup(args []string) error {
@@ -54,6 +55,8 @@ func setup(args []string) error {
 			f.write = true
 		case a == "--no-clients":
 			f.noClients = true
+		case a == "--keyring":
+			f.keyring = true
 		case a == "--yes", a == "-y":
 			f.yes = true
 		case strings.HasPrefix(a, "--url="):
@@ -183,7 +186,7 @@ func setup(args []string) error {
 				}
 			}
 		} else {
-			fmt.Println("Кука уже сохранена:", auth.CookieFile(rxURL), "(обновить: rxmcp login)")
+			fmt.Println("Кука уже сохранена:", secret.Where(auth.CookieFile(rxURL)), "(обновить: rxmcp login)")
 		}
 	case "oidc":
 		if prof["RXMCP_OIDC_ISSUER"] == "" && tty {
@@ -221,6 +224,12 @@ func setup(args []string) error {
 	}
 	fmt.Println()
 	fmt.Println("Профиль записан:", config.FilePath())
+
+	// Связка ключей ОС: предлагаем, только если она отвечает. На сервере Linux и в WSL
+	// без графического сеанса её нет, и вопрос там ни к чему.
+	if f.keyring || (tty && !f.yes) {
+		offerKeyring(in, f.keyring)
+	}
 
 	// Проверка подключения: только чтение.
 	fmt.Println()
@@ -522,4 +531,30 @@ func localZoneName() string {
 		}
 	}
 	return ""
+}
+
+// offerKeyring предлагает перенести пароль и куку в связку ключей ОС. С --keyring переносит
+// без вопроса. Если связка недоступна, секреты остаются в файлах, setup не падает.
+func offerKeyring(in *bufio.Reader, force bool) {
+	if os.Getenv("RXMCP_SECRETS") != "" || secret.ModeFor(auth.Dir()) == secret.Keyring {
+		return
+	}
+	if err := secret.Check(); err != nil {
+		if force {
+			fmt.Println("Связка ключей недоступна, секреты остаются в файлах 0600:", err)
+		}
+		return
+	}
+	if !force {
+		fmt.Println()
+		fmt.Printf("Пароль и куку можно хранить не в файле, а в связке ключей ОС (%s).\n", keyringName())
+		if !yes(in, "Хранить секреты в связке ключей?", runtime.GOOS == "darwin" || runtime.GOOS == "windows") {
+			return
+		}
+	}
+	if err := secretsToKeyring(false); err != nil {
+		fmt.Println("Перенести в связку ключей не удалось, секреты остаются в файлах:", err)
+		return
+	}
+	fmt.Printf("Секреты в связке ключей (%s). Вернуть в файлы: rxmcp secrets file\n", keyringName())
 }

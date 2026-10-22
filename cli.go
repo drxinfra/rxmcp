@@ -13,6 +13,7 @@ import (
 
 	"github.com/drxinfra/rxmcp/internal/auth"
 	"github.com/drxinfra/rxmcp/internal/config"
+	"github.com/drxinfra/rxmcp/internal/secret"
 )
 
 // configCmd показывает и правит профиль. Секреты не печатаются никогда:
@@ -47,7 +48,7 @@ func configCmd(args []string) error {
 		}
 		if u := prof["RXMCP_URL"]; u != "" {
 			if _, err := auth.LoadCookie(u); err == nil {
-				fmt.Println("  кука                     сохранена:", auth.CookieFile(u))
+				fmt.Println("  кука                     сохранена:", secret.Where(auth.CookieFile(u)))
 			}
 		}
 		return nil
@@ -68,6 +69,10 @@ func configCmd(args []string) error {
 			}
 			if !knownKey(k) {
 				return fmt.Errorf("неизвестный ключ %s; список: rxmcp help", k)
+			}
+			if k == "RXMCP_SECRETS" {
+				// Одной правкой профиля секреты не переедут: кука и токены останутся в файлах.
+				return errors.New("режим хранения секретов меняется командой rxmcp secrets keyring или rxmcp secrets file")
 			}
 			prof[k] = strings.TrimSpace(v)
 		}

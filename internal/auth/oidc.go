@@ -15,13 +15,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/drxinfra/rxmcp/internal/secret"
 )
 
 // OIDCConfig настройки провайдера.
@@ -389,17 +390,13 @@ func (c *OIDCConfig) exchange(ctx context.Context, endpoint string, form url.Val
 }
 
 func (c *OIDCConfig) save(t *Tokens) error {
-	f := c.cacheFile()
-	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
-		return err
-	}
 	data, _ := json.MarshalIndent(t, "", "  ")
-	return os.WriteFile(f, data, 0o600)
+	return secret.WriteFile(c.cacheFile(), data)
 }
 
 // Load читает сохранённые токены.
 func (c *OIDCConfig) Load() (*Tokens, error) {
-	data, err := os.ReadFile(c.cacheFile())
+	data, err := secret.ReadFile(c.cacheFile())
 	if err != nil {
 		return nil, err
 	}
@@ -415,11 +412,7 @@ func (c *OIDCConfig) Load() (*Tokens, error) {
 
 // Logout удаляет сохранённые токены.
 func (c *OIDCConfig) Logout() error {
-	err := os.Remove(c.cacheFile())
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
+	return secret.Remove(c.cacheFile())
 }
 
 // Source выдаёт актуальный access token, обновляя его по refresh_token.

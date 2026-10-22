@@ -2,13 +2,16 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/drxinfra/rxmcp/internal/auth"
+	"github.com/drxinfra/rxmcp/internal/secret"
 )
 
 // Настройки живут в своём файле, а не в конфиге Claude. Причина простая:
@@ -30,14 +33,28 @@ var Known = []string{
 	"RXMCP_OIDC_FLOW", "RXMCP_OIDC_PORT", "RXMCP_USER_ID", "RXMCP_ALLOW_WRITE", "RXMCP_CONFIRM", "RXMCP_INSECURE_TLS",
 	"RXMCP_CA", "RXMCP_TIMEOUT", "RXMCP_MAX_TEXT", "RXMCP_TZ", "RXMCP_HTTP_ADDR", "RXMCP_HTTP_SECRET", "RXMCP_HELP_URL",
 	"RXMCP_UPDATE_CHECK", "RXMCP_HTTP_AUTH", "RXMCP_HTTP_OIDC_ISSUER", "RXMCP_HTTP_OIDC_AUDIENCE",
-	"RXMCP_HTTP_USER_CLAIM", "RXMCP_HTTP_REQUIRE_ROLE",
+	"RXMCP_HTTP_USER_CLAIM", "RXMCP_HTTP_REQUIRE_ROLE", "RXMCP_SECRETS", "RXMCP_TOOLS",
+}
+
+// SecretKeys ключи профиля, которые в режиме RXMCP_SECRETS=keyring лежат в связке ключей.
+var SecretKeys = []string{"RXMCP_PASSWORD", "RXMCP_TOKEN", "RXMCP_COOKIE", "RXMCP_OIDC_CLIENT_SECRET", "RXMCP_HTTP_SECRET"}
+
+// SecretAccount имя записи ключа профиля в связке ключей.
+func SecretAccount(key string) string { return FilePath() + "#" + key }
+
+func profileMode(m map[string]string) string {
+	if v := strings.TrimSpace(os.Getenv("RXMCP_SECRETS")); v != "" {
+		return secret.Normalize(v)
+	}
+	return secret.Normalize(m["RXMCP_SECRETS"])
 }
 
 // Secret сообщает, что значение ключа нельзя печатать.
 func Secret(key string) bool {
-	switch key {
-	case "RXMCP_PASSWORD", "RXMCP_TOKEN", "RXMCP_COOKIE", "RXMCP_OIDC_CLIENT_SECRET", "RXMCP_HTTP_SECRET":
-		return true
+	for _, k := range SecretKeys {
+		if k == key {
+			return true
+		}
 	}
 	return false
 }
@@ -78,18 +95,45 @@ func LoadFile() (map[string]string, error) {
 			return nil, fmt.Errorf("%s: ключ %s должен быть строкой", FilePath(), key)
 		}
 	}
+	if profileMode(out) == secret.Keyring {
+		for _, k := range SecretKeys {
+			v, err := secret.Get(SecretAccount(k))
+			switch {
+			case err == nil:
+				out[k] = v
+			case errors.Is(err, fs.ErrNotExist):
+				// В связке нет: остаётся значение из файла, если оно там есть.
+			default:
+				return nil, err
+			}
+		}
+	}
 	return out, nil
 }
 
 // SaveFile перезаписывает профиль правами 0600 (там может лежать пароль или кука).
+// В режиме RXMCP_SECRETS=keyring секретные ключи уходят в связку ключей, а в файле
+// остаётся только несекретное; ключ, которого нет в m, удаляется и из связки.
 func SaveFile(m map[string]string) error {
 	dir, err := auth.EnsureDir()
 	if err != nil {
 		return err
 	}
+	keyring := profileMode(m) == secret.Keyring
+	if keyring {
+		for _, k := range SecretKeys {
+			if v := m[k]; v != "" {
+				if err := secret.Set(SecretAccount(k), v); err != nil {
+					return fmt.Errorf("%s: %w", k, err)
+				}
+			} else if err := secret.Delete(SecretAccount(k)); err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
+		}
+	}
 	keys := make([]string, 0, len(m))
 	for k, v := range m {
-		if v != "" {
+		if v != "" && !(keyring && Secret(k)) {
 			keys = append(keys, k)
 		}
 	}

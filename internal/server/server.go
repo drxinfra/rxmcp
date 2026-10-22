@@ -26,12 +26,13 @@ type Options struct {
 	NoConfirm    bool // не спрашивать подтверждение формой (RXMCP_CONFIRM=0)
 	MaxTextChars int
 	Logger       *slog.Logger
-	Help         *HelpSource   // справка стенда; nil = инструменты справки не регистрируются
-	OData        *odata.Client // прямой доступ к OData для каталога сущностей; nil = без него
-	StateDir     string        // каталог для отметки rx_whats_new; пусто = отметка не хранится
-	StateKey     string        // стенд и пользователь, чтобы отметки разных RX не смешивались
-	Host         string        // хост RX: в названии и описании сервера, чтобы помощник различал системы
-	User         string        // HTTP-режим с персональными учётками: кто вызывает, для журнала
+	Help         *HelpSource     // справка стенда; nil = инструменты справки не регистрируются
+	OData        *odata.Client   // прямой доступ к OData для каталога сущностей; nil = без него
+	StateDir     string          // каталог для отметки rx_whats_new; пусто = отметка не хранится
+	StateKey     string          // стенд и пользователь, чтобы отметки разных RX не смешивались
+	Host         string          // хост RX: в названии и описании сервера, чтобы помощник различал системы
+	User         string          // HTTP-режим с персональными учётками: кто вызывает, для журнала
+	Tools        map[string]bool // RXMCP_TOOLS: какие инструменты оставить (ParseTools); nil = все
 }
 
 // Server обёртка над mcp.Server.
@@ -63,6 +64,7 @@ func New(svc *rx.Service, opt Options) *Server {
 		title = "Directum RX · " + opt.Host
 		instr = "Система: " + opt.Host + ". Если подключено несколько Directum RX, данные этой системы берите только её инструментами.\n" + instructions
 	}
+	instr = instructionsFor(opt, instr)
 	s.MCP = mcp.NewServer(&mcp.Implementation{
 		Name:       "rxmcp",
 		Title:      title,
@@ -79,7 +81,8 @@ func New(svc *rx.Service, opt Options) *Server {
 	s.registerRead()
 	s.registerWhatsNew()
 	s.registerModules()
-	if opt.Help != nil {
+	// Справку без её инструментов не регистрируем вовсе: она скачивает оглавление со стенда.
+	if opt.Help != nil && opt.allows("rx_help_search") {
 		s.registerHelp()
 	}
 	if opt.OData != nil {
@@ -93,6 +96,7 @@ func New(svc *rx.Service, opt Options) *Server {
 			s.registerCatalogWrite()
 		}
 	}
+	s.applyToolsets()
 	s.registerResources()
 	s.registerPrompts()
 	return s

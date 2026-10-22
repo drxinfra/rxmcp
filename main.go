@@ -28,6 +28,7 @@ import (
 	"github.com/drxinfra/rxmcp/internal/jwtverify"
 	"github.com/drxinfra/rxmcp/internal/odata"
 	"github.com/drxinfra/rxmcp/internal/rx"
+	"github.com/drxinfra/rxmcp/internal/secret"
 	"github.com/drxinfra/rxmcp/internal/server"
 	"github.com/drxinfra/rxmcp/internal/weblogin"
 )
@@ -53,6 +54,7 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   rxmcp serve --http    запустить по HTTP (Streamable HTTP) на RXMCP_HTTP_ADDR, нужен RXMCP_HTTP_SECRET
   rxmcp config          показать профиль; config set КЛЮЧ=значение, config unset КЛЮЧ, config path
   rxmcp logout          удалить сохранённые куку и токены
+  rxmcp secrets         где лежат секреты; secrets keyring перенести в связку ключей ОС, secrets file вернуть в файлы
   rxmcp install         напечатать фрагменты конфигурации для клиентов; --apply прописать сразу
   rxmcp query SET [$k=v …]   один GET к OData для отладки, например: rxmcp query IAssignments '$top=1'
   rxmcp call Module/Action '{json}'   один POST действия для отладки (меняет данные, если действие пишущее)
@@ -84,6 +86,9 @@ const usage = `rxmcp %s: MCP-сервер для Directum RX (drxinfra.ru/rxmcp)
   RXMCP_HELP_URL      каталог справки, если он не рядом с веб-клиентом (по умолчанию <адрес RX>/Client/WebHelp/ru-RU)
   RXMCP_HTTP_ADDR     адрес для serve --http, например 127.0.0.1:8765
   RXMCP_HTTP_SECRET   общий секрет для HTTP-режима, клиент шлёт Authorization: Bearer <секрет>
+  RXMCP_SECRETS       file (по умолчанию, файлы 0600) | keyring (связка ключей ОС); менять командой rxmcp secrets
+  RXMCP_TOOLS         наборы инструментов через запятую: core (всегда), boards, projects, kb, help, catalog;
+                      по умолчанию все. Пример: RXMCP_TOOLS=boards,kb (для малых локальных моделей)
   RXMCP_UPDATE_CHECK  0 = не узнавать о новых версиях (по умолчанию раз в сутки спрашивает
                       drxinfra.ru/dl/rxmcp/latest.txt, при недоступности GitHub; больше ничего не шлёт)
 `
@@ -117,6 +122,8 @@ func run(args []string) error {
 		return setup(args)
 	case "config":
 		return configCmd(args)
+	case "secrets":
+		return secretsCmd(args)
 	case "install":
 		for _, a := range args {
 			if a == "--apply" {
@@ -170,7 +177,7 @@ func run(args []string) error {
 		if err := auth.ForgetCookie(cfg.URL); err != nil {
 			return err
 		}
-		if err := os.Remove(weblogin.File(auth.Dir(), cfg.URL)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := secret.Remove(weblogin.File(auth.Dir(), cfg.URL)); err != nil {
 			return err
 		}
 		if cfg.OIDCIssuer != "" {
@@ -207,6 +214,9 @@ func build() (*config.Config, *rx.Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, err
 	}
+	if cfg.ToolSet, err = server.ParseTools(cfg.Tools); err != nil {
+		return nil, nil, err
+	}
 	cl, err := newClient(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -232,7 +242,7 @@ func newClient(cfg *config.Config) (*odata.Client, error) {
 		o.CookieFunc = func() (string, error) { return auth.LoadCookie(u) }
 		o.CookieSave = func(c string) error { return auth.SaveCookie(u, c) }
 		// Есть сессия провайдера (rxmcp login --sso): истёкшую куку rxmcp перевыпустит сам.
-		if sf := weblogin.File(auth.Dir(), u); fileExists(sf) {
+		if sf := weblogin.File(auth.Dir(), u); secret.Exists(sf) {
 			root, err := weblogin.Root(u)
 			if err != nil {
 				return nil, err
@@ -380,11 +390,6 @@ func loginSSO() error {
 	return check()
 }
 
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
-}
-
 // cookieHint предупреждает о частой ошибке: в списке куки RX берут external_identity
 // вместо sungero_client. Обе выглядят как длинная строка base64, но сессию держит вторая,
 // и она заметно длиннее. Значение всё равно сохраняем: размеры зависят от системы.
@@ -506,7 +511,7 @@ func serve(httpMode bool) error {
 	if err != nil {
 		return err
 	}
-	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: helpClient,
+	srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm, MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: helpClient, Tools: cfg.ToolSet,
 		StateDir: auth.Dir(), StateKey: stateKey(cfg), Host: hostOf(cfg.URL)})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -693,7 +698,13 @@ func check() error {
 	} else {
 		fmt.Print(" Режим только чтение.")
 	}
+	if cfg.ToolSet != nil {
+		fmt.Printf(" Наборы инструментов: core + %s.", cfg.Tools)
+	}
 	fmt.Println()
+	if cfg.Secrets == secret.Keyring {
+		fmt.Println("Секреты в связке ключей ОС.")
+	}
 	if v := availableUpdate(5 * time.Second); v != "" {
 		fmt.Printf("Вышла rxmcp %s (у вас %s): rxmcp update\n", v, version)
 	}
@@ -965,7 +976,7 @@ func usersHandler(cfg *config.Config, log *slog.Logger) (http.Handler, error) {
 		}
 		svc := rx.New(cl, ti.UserID, 0, cfg.PageSize, cfg.MaxPageSize, rx.Formatter{Loc: cfg.Location()})
 		srv := server.New(svc, server.Options{Version: version, AllowWrite: cfg.AllowWrite, NoConfirm: !cfg.Confirm,
-			MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: cl,
+			MaxTextChars: cfg.MaxTextChars, Logger: log, Help: helpSrc, OData: cl, Tools: cfg.ToolSet,
 			StateDir: auth.Dir(), StateKey: hostOf(cfg.URL) + "-" + ti.UserID, Host: hostOf(cfg.URL), User: ti.UserID})
 		return srv.MCP
 	}

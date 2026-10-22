@@ -4,11 +4,14 @@ package config
 import (
 	"errors"
 	"fmt"
-	"github.com/drxinfra/rxmcp/internal/auth"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/drxinfra/rxmcp/internal/auth"
+	"github.com/drxinfra/rxmcp/internal/secret"
+
 	// База часовых поясов внутри бинарника: в образе FROM scratch и на части Windows её нет,
 	// и RXMCP_TZ молча не срабатывал — даты шли в UTC.
 	_ "time/tzdata"
@@ -68,6 +71,12 @@ type Config struct {
 	HelpURL string
 	// Раз в сутки узнавать, не вышла ли новая версия rxmcp. RXMCP_UPDATE_CHECK=0 выключает.
 	UpdateCheck bool
+	// Где хранить секреты: file (файлы 0600, по умолчанию) или keyring (связка ключей ОС).
+	Secrets string
+	// RXMCP_TOOLS: наборы инструментов через запятую, пусто = все. Разбирает server.ParseTools,
+	// результат кладёт в ToolSet тот, кто создаёт сервер.
+	Tools   string
+	ToolSet map[string]bool
 }
 
 // HelpBase адрес каталога справки на стенде. По умолчанию справка лежит рядом с веб-клиентом:
@@ -128,6 +137,8 @@ func FromEnv() (*Config, error) {
 		HTTPRequireRole:  get("RXMCP_HTTP_REQUIRE_ROLE"),
 		HelpURL:          get("RXMCP_HELP_URL"),
 		UpdateCheck:      !isFalse(get("RXMCP_UPDATE_CHECK")),
+		Secrets:          secret.Normalize(get("RXMCP_SECRETS")),
+		Tools:            get("RXMCP_TOOLS"),
 	}
 	if v := get("RXMCP_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -166,6 +177,9 @@ func (c *Config) Validate() error {
 		if _, err := time.LoadLocation(c.TimeZone); err != nil {
 			return fmt.Errorf("RXMCP_TZ=%q: неизвестный часовой пояс, пример Europe/Moscow", c.TimeZone)
 		}
+	}
+	if c.Secrets != "" && c.Secrets != secret.File && c.Secrets != secret.Keyring {
+		return fmt.Errorf("RXMCP_SECRETS=%q: допустимо file или keyring", c.Secrets)
 	}
 	if c.URL == "" {
 		return errors.New("не задан адрес RX: выполните `rxmcp setup` или передайте RXMCP_URL (например https://rx.company.ru/Integration)")

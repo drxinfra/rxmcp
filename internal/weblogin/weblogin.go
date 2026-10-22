@@ -20,15 +20,17 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/drxinfra/rxmcp/internal/secret"
 )
 
-// State куки провайдера для одного RX. Хранится в файле рядом с кукой RX, права 0600.
+// State куки провайдера для одного RX. Хранится рядом с кукой RX: в файле с правами 0600
+// или в связке ключей ОС (RXMCP_SECRETS=keyring).
 type State struct {
 	// URL область кук провайдера, например https://sso.company.ru/realms/company/
 	URL string `json:"url"`
@@ -53,7 +55,7 @@ func File(dir, rxURL string) string {
 
 // Load читает сохранённые куки провайдера.
 func Load(path string) (*State, error) {
-	b, err := os.ReadFile(path)
+	b, err := secret.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -67,28 +69,13 @@ func Load(path string) (*State, error) {
 	return &s, nil
 }
 
-// Save пишет куки провайдера через временный файл: читать его могут сразу несколько процессов.
+// Save сохраняет куки провайдера; файл пишется через временный, читать его могут сразу несколько процессов.
 func Save(path string, s *State) error {
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".sso-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return secret.WriteFile(path, b)
 }
 
 // Root корень веб-сервера RX по адресу сервиса интеграции: https://rx.company.ru

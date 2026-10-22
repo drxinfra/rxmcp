@@ -169,7 +169,9 @@ main.go                 команды: serve (по умолчанию), check, 
 selfupdate.go           rxmcp update и строка о новой версии в version и check
 setup.go                rxmcp setup: вопросы, проверка входа, запись сервера в конфиги Claude Desktop, Claude Code, Cursor
 cli.go                  rxmcp config (показать, set, unset, path), cookie из буфера обмена
+secrets.go              rxmcp secrets: где лежат секреты, перенос в связку ключей ОС и обратно
 internal/auth           каталог настроек, хранилище cookie, OIDC: PKCE, device flow, кэш токенов
+internal/secret         где лежат секреты: файлы 0600 или связка ключей ОС (go-keyring); длинные значения частями
 internal/weblogin       вход как веб-клиент RX по сессии провайдера (login --sso), продление cookie на 401
 internal/config         профиль (~/.config/rxmcp/config.json) и переменные окружения; окружение приоритетнее
 internal/odata          HTTP-клиент OData: GET/POST, аутентификация, ошибки, лимиты
@@ -177,7 +179,7 @@ internal/rx             доменные запросы и форматиров�
 internal/help           справка стенда: разбор оглавления и статей, скачивание, индекс, поиск
 internal/catalog        каталог сущностей по $metadata: разбор, поиск по названию, описание полей
 internal/textx          извлечение текста из docx/xlsx/txt/…
-internal/server         регистрация инструментов, ресурсов, промптов в MCP; новость о версии к ответу инструмента
+internal/server         регистрация инструментов, ресурсов, промптов в MCP; наборы инструментов (RXMCP_TOOLS); новость о версии к ответу инструмента
 internal/update         последняя версия (зеркало, GitHub), кэш на сутки, скачивание со сверкой SHA256SUMS, замена бинарника
 hack/build.sh           архивы под все платформы в dist/
 hack/leakcheck.sh       страж утечек: адреса стендов, учётки, чужие имена; в CI и перед коммитом
@@ -217,7 +219,6 @@ lhm.plugin.json         описание для LobeHub, обновляется 
 ## Что не сделано
 
 - Negotiate: SSPI на Windows, Kerberos на Linux.
-- Хранение секретов в связке ключей ОС (Keychain, Credential Manager, Secret Service) вместо файлов `0600`.
 - Сканы в JBIG2 и JPEG 2000 (компактный PDF у части МФУ): нужен свой декодер на Go.
 - Отметка рабочего времени (модуль TimeTracker, есть не на всех стендах): табель за период (`TimeTracker/GetTimeSheet`), поиск работ, на которые списывать (`FindWorkItems`, `FindLeadObjects`), и списание часов (`SaveTimeSheet`). Проверять только на тестовой учётке.
 - Полнотекстовый поиск по содержимому документов: в сервисе интеграции его нет, есть только у модуля вендора `IntegrationAIAgent` (`HandleMcpRequest`, нужна лицензия модуля).
