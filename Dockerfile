@@ -15,6 +15,8 @@ LABEL org.opencontainers.image.description="MCP server for Directum RX"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /rxmcp /rxmcp
+# Лицензия и NOTICE едут вместе с бинарником: так требует Apache-2.0 (раздел 4).
+COPY LICENSE NOTICE /
 # Настройки внутри контейнера: смонтируйте каталог сюда, если нужен профиль или cookie.
 ENV RXMCP_HOME=/config
 # В контейнере бинарник меняют вместе с образом, проверка новых версий ни к чему.

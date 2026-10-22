@@ -1,0 +1,16 @@
+rxmcp: MCP server for Directum RX
+Copyright 2026 drxinfra (https://drxinfra.ru)
+
+This product includes software developed by drxinfra
+(https://github.com/drxinfra/rxmcp).
+
+The names "rxmcp" and "drxinfra" identify the original project. The Apache
+License 2.0 does not grant permission to use them (section 6). A fork or
+derivative work must be distributed under a different name and must not
+suggest that it is made or endorsed by drxinfra.
+
+PDF text extraction uses a modified copy of github.com/ledongthuc/pdf
+(BSD-3-Clause), see internal/thirdparty/pdf/LICENSE.
+
+Directum RX is a product of Directum. This project is not affiliated with
+the vendor; trademarks belong to their owners.

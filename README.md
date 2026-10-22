@@ -218,5 +218,7 @@ go test ./...
 
 Apache-2.0. Текст из PDF извлекается копией библиотеки [ledongthuc/pdf](https://github.com/ledongthuc/pdf) (BSD-3-Clause) с правками, она лежит в `internal/thirdparty/pdf`. Directum RX — продукт Directum; проект с вендором не связан, торговые знаки принадлежат правообладателям.
 
+Форк или производная работа должны сохранить файл [NOTICE](NOTICE) с указанием авторства. Права на имена «rxmcp» и «drxinfra» лицензия не даёт (раздел 6), так что форк выпускается под другим именем.
+
 
 [![Directum RX MCP (rxmcp) MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/drxinfra/rxmcp/badges/card.svg)](https://glama.ai/mcp/servers/drxinfra/rxmcp)

@@ -10,7 +10,7 @@ for target in linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64; d
   bin="rxmcp"; [ "$os" = windows ] && bin="rxmcp.exe"
   mkdir -p "$out"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out/$bin" .
-  cp README.md LICENSE "$out/"
+  cp README.md LICENSE NOTICE "$out/"
   if [ "$os" = windows ]; then (cd dist && zip -qr "rxmcp-${VERSION}-${os}-${arch}.zip" "$(basename "$out")"); else (cd dist && tar -czf "rxmcp-${VERSION}-${os}-${arch}.tar.gz" "$(basename "$out")"); fi
   rm -rf "$out"
 done
