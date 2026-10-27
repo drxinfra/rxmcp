@@ -1316,7 +1316,7 @@
     },
     {
       "name": "rx_ticket",
-      "description": "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket.",
+      "description": "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Кто и когда менял карточку: rx_ticket_history.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1335,6 +1335,33 @@
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Карточка"
+      }
+    },
+    {
+      "name": "rx_ticket_history",
+      "description": "История карточки agile-доски, как вкладка «История»: кто и когда создал карточку, двигал по колонкам, менял статус, срок, план и факт, исполнителей, теги, заголовок и описание. От старых событий к новым, по умолчанию последние 30. Используйте на вопросы «когда карточку закрыли», «кто её двигал», «сколько она висела в работе», «когда поменяли срок». Нужен числовой Id карточки из rx_tickets или rx_board. Сама карточка и комментарии: rx_ticket. Только чтение.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "сколько последних событий показать, по умолчанию 30, максимум 200"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "История карточки"
       }
     },
     {
@@ -1552,7 +1579,7 @@
       }
     }
   ],
-  "version": "0.13.0",
+  "version": "0.14.0",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
   "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",
