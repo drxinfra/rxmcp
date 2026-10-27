@@ -182,7 +182,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket",
-		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket.",
+		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Кто и когда менял карточку: rx_ticket_history.",
 		Annotations: ro("Карточка"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketIDIn) (*mcp.CallToolResult, any, error) {
 		t, err := s.svc.TicketByID(ctx, in.ID)
@@ -190,6 +190,28 @@ func (s *Server) registerModules() {
 			return fail(err)
 		}
 		return text(s.svc.F.TicketCard(*t) + s.ticketComments(ctx, t)), nil, nil
+	})
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name:        "rx_ticket_history",
+		Description: "История карточки agile-доски, как вкладка «История»: кто и когда создал карточку, двигал по колонкам, менял статус, срок, план и факт, исполнителей, теги, заголовок и описание. От старых событий к новым, по умолчанию последние 30. Используйте на вопросы «когда карточку закрыли», «кто её двигал», «сколько она висела в работе», «когда поменяли срок». Нужен числовой Id карточки из rx_tickets или rx_board. Сама карточка и комментарии: rx_ticket. Только чтение.",
+		Annotations: ro("История карточки"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketHistoryIn) (*mcp.CallToolResult, any, error) {
+		t, err := s.svc.TicketByID(ctx, in.ID)
+		if err != nil {
+			return fail(err)
+		}
+		evs, err := s.svc.TicketHistory(ctx, t)
+		if err != nil {
+			return fail(err)
+		}
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 30
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		return text(s.svc.F.History(t, evs, limit)), nil, nil
 	})
 
 	// Проекты и планы

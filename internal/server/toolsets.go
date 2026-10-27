@@ -21,7 +21,7 @@ var toolsets = map[string][]string{
 		"rx_send_for_acquaintance", "rx_send_for_approval",
 	},
 	"boards": {
-		"rx_boards", "rx_board", "rx_tickets", "rx_ticket",
+		"rx_boards", "rx_board", "rx_tickets", "rx_ticket", "rx_ticket_history",
 		"rx_create_ticket", "rx_update_ticket", "rx_delete_tickets", "rx_create_column",
 		"rx_comment_ticket", "rx_edit_comment", "rx_delete_comment",
 	},
