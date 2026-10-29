@@ -23,7 +23,9 @@ import (
 //     план (PlannedWorkload) и факт (ActualWorkload) сервер берёт из запроса
 //     всегда: не переданное поле обнуляется (ApplyTicketChanges в AgileBoards);
 //   - Position в ссылке сервер выполняет как перестановку: 0 поднимает карточку
-//     в начало колонки, -1 означает «место не задано» и оставляет её где была.
+//     в начало колонки, -1 означает «место не задано» и оставляет её где была;
+//   - описание приводится к виду редактора веб-клиента (EditorMarkdown), иначе
+//     открытая карточка сразу считается изменённой и просит «Сохранить».
 
 const keepPosition = -1
 
@@ -354,7 +356,7 @@ func (s *Service) CreateTicket(ctx context.Context, in TicketInput) (*Ticket, *B
 		pr = 10
 	}
 	t := ticketWire{
-		ID: newID, BoardID: b.ID, Name: in.Name, Description: in.Description,
+		ID: newID, BoardID: b.ID, Name: in.Name, Description: EditorMarkdown(in.Description),
 		Priority: pr, IsEnabled: true, IsDescribed: in.Description != "",
 		TicketsTags: refsFromTags(tagIDs), Performers: refsFromPerformers(perfIDs),
 		Attachments: atts, AttachmentsCount: len(atts),
@@ -458,7 +460,9 @@ func (s *Service) UpdateTicket(ctx context.Context, ticketID int64, in TicketInp
 		t.Name = in.Name
 	}
 	if in.Description != "" {
-		t.Description = in.Description
+		// новое описание в виде редактора клиента, иначе карточка при открытии
+		// просит «Сохранить»; старое уходит как было
+		t.Description = EditorMarkdown(in.Description)
 		t.IsDescribed = true
 	}
 	if in.Priority > 0 {
