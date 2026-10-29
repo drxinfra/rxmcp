@@ -25,10 +25,13 @@ var toolsets = map[string][]string{
 		"rx_create_ticket", "rx_update_ticket", "rx_delete_tickets", "rx_create_column",
 		"rx_comment_ticket", "rx_edit_comment", "rx_delete_comment",
 	},
-	"projects": {"rx_projects", "rx_project", "rx_project_plans", "rx_project_plan"},
-	"kb":       {"rx_kb_areas", "rx_kb_search", "rx_kb_article", "rx_create_article", "rx_update_article"},
-	"help":     {"rx_help_search", "rx_help_topic", "rx_help_toc"},
-	"catalog":  {"rx_find_entity", "rx_describe_entity", "rx_query", "rx_call_action"},
+	"projects": {
+		"rx_projects", "rx_project", "rx_project_plans", "rx_project_plan", "rx_project_risks",
+		"rx_create_risks", "rx_update_risk", "rx_create_gates", "rx_update_gate",
+	},
+	"kb":      {"rx_kb_areas", "rx_kb_search", "rx_kb_article", "rx_create_article", "rx_update_article"},
+	"help":    {"rx_help_search", "rx_help_topic", "rx_help_toc"},
+	"catalog": {"rx_find_entity", "rx_describe_entity", "rx_query", "rx_call_action"},
 }
 
 // ToolsetNames имена наборов по алфавиту, для справки и сообщений об ошибке.

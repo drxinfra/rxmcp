@@ -55,10 +55,15 @@ func (f Formatter) now() time.Time {
 	return time.Now().In(f.Loc)
 }
 
-// Date форматирует дату без времени.
+// Date форматирует дату без времени. Поля-даты RX отдаёт полночью в поясе сервера
+// («2025-12-05T00:00:00+04:00»); перевод в пояс пользователя западнее сервера дал бы
+// 04.12 23:00, то есть день назад. Поэтому полночь читаем как дату в её собственном поясе.
 func (f Formatter) Date(t *time.Time) string {
 	if t == nil || t.IsZero() {
 		return "—"
+	}
+	if h, m, s := t.Clock(); h == 0 && m == 0 && s == 0 && t.Nanosecond() == 0 {
+		return t.Format("02.01.2006")
 	}
 	return t.In(f.Loc).Format("02.01.2006")
 }

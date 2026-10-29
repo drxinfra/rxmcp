@@ -81,6 +81,7 @@ func New(svc *rx.Service, opt Options) *Server {
 	s.registerRead()
 	s.registerWhatsNew()
 	s.registerModules()
+	s.registerProjectRead()
 	// Справку без её инструментов не регистрируем вовсе: она скачивает оглавление со стенда.
 	if opt.Help != nil && opt.allows("rx_help_search") {
 		s.registerHelp()
@@ -92,6 +93,7 @@ func New(svc *rx.Service, opt Options) *Server {
 		s.registerWrite()
 		s.registerDocflowWrite()
 		s.registerBoardWrite()
+		s.registerProjectWrite()
 		if opt.OData != nil {
 			s.registerCatalogWrite()
 		}

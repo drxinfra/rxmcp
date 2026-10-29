@@ -8,7 +8,7 @@ import (
 )
 
 var stageRu = map[string]string{
-	"Initiation": "инициация", "Planning": "планирование", "Execution": "исполнение", "Closing": "завершение",
+	"Initiation": "инициация", "Planning": "планирование", "Execution": "исполнение", "Closing": "завершение", "Completion": "завершение",
 	"Completed": "завершён", "Aborted": "прекращён", "Suspended": "приостановлен", "Active": "активен", "Closed": "закрыт",
 	"NotSpecified": "не указан", "OK": "в норме", "Warning": "есть риски", "Critical": "критично",
 	"AHigh": "высокий", "BMedium": "средний", "CLow": "низкий", "High": "высокий", "Medium": "средний", "Low": "низкий",
@@ -360,18 +360,41 @@ func (f Formatter) ProjectCard(p Project, plans []Document) string {
 		}
 	}
 	if len(p.Gates) > 0 {
-		b.WriteString("Гейты:\n")
+		b.WriteString("Контрольные точки:\n")
 		for _, g := range p.Gates {
-			n := "гейт"
+			n := "КТ"
 			if g.Gate != nil {
-				n = g.Gate.Name
+				n = fmt.Sprintf("#%d %s", g.Gate.ID, g.Gate.Name)
 			}
-			st := "не пройден"
+			line := "  " + n
+			if g.Level != "" {
+				line += " · " + GateLevelRu(g.Level)
+			}
+			line += " · план " + f.Date(g.PlanDate)
 			if g.IsPassed {
-				st = "пройден " + f.Date(g.ActualDate)
+				line += " · достигнута " + f.Date(g.ActualDate)
+			} else {
+				if g.ActualDate != nil {
+					line += " · прогноз даты " + f.Date(g.ActualDate)
+				}
+				if g.Assessment != "" {
+					line += " · " + GateAssessmentRu(g.Assessment)
+				}
 			}
-			fmt.Fprintf(&b, "  %s · план %s · %s\n", n, f.Date(g.PlanDate), st)
+			if g.Performer != nil && g.Performer.Name != "" {
+				line += " · отв. " + g.Performer.Name
+			}
+			b.WriteString(line + "\n")
 		}
+	}
+	if p.Risks != nil {
+		open := 0
+		for _, r := range p.Risks {
+			if !riskClosed(r.RiskStatus) {
+				open++
+			}
+		}
+		fmt.Fprintf(&b, "Риски: %d, из них открытых %d (список: rx_project_risks)\n", len(p.Risks), open)
 	}
 	if d := strings.TrimSpace(p.Description); d != "" {
 		fmt.Fprintf(&b, "Описание: %s\n", trim(d, 1500))
@@ -399,6 +422,10 @@ func groupRu(g string) string {
 		return "участники"
 	case "Observers":
 		return "наблюдатели"
+	case "Change":
+		return "участники (изменение)"
+	case "Read":
+		return "участники (просмотр)"
 	}
 	return g
 }

@@ -339,9 +339,13 @@ type Project struct {
 		ActualDate *time.Time `json:"ActualDate"`
 		IsPassed   bool       `json:"IsPassed"`
 		Level      string     `json:"Level"`
+		Assessment string     `json:"Assessment"`
+		Performer  *Ref       `json:"Performer"`
 		Gate       *Ref       `json:"Gate"`
 	} `json:"GatesDirRX"`
 	Type string `json:"@odata.type"`
+	// Risks риски проекта; nil, если их не удалось прочитать (нет модуля или прав).
+	Risks []Risk `json:"-"`
 }
 
 // ProjectFilter параметры списка проектов.
@@ -391,15 +395,18 @@ func (s *Service) Projects(ctx context.Context, fl ProjectFilter) ([]Project, *i
 	return items, page.Count, err
 }
 
-// ProjectByID карточка проекта с командой, гейтами и планами.
+// ProjectByID карточка проекта с командой, контрольными точками, рисками и планами.
 func (s *Service) ProjectByID(ctx context.Context, id int64) (*Project, []Document, error) {
 	var p Project
 	if err := s.c.Get(ctx, "IProjectCores", id, odata.Query{
 		Select: "Id,Name,ShortName,Status,Stage,StatusIssues,Priority,Description,Note,StartDate,EndDate,ActualStartDate,ActualFinishDate,ExecutionPercent,Modified",
 		Expand: "Manager($select=Id,Name),Administrator($select=Id,Name),InternalCustomer($select=Id,Name),ExternalCustomer($select=Id,Name),ProjectKind($select=Id,Name),LeadingProject($select=Id,Name)," +
-			"TeamMembers($select=Group;$expand=Member($select=Id,Name)),GatesDirRX($select=PlanDate,ActualDate,IsPassed,Level;$expand=Gate($select=Id,Name))",
+			"TeamMembers($select=Group;$expand=Member($select=Id,Name)),GatesDirRX($select=PlanDate,ActualDate,IsPassed,Level,Assessment;$expand=Gate($select=Id,Name),Performer($select=Id,Name))",
 	}, &p); err != nil {
 		return nil, nil, err
+	}
+	if rs, err := s.ProjectRisks(ctx, id); err == nil {
+		p.Risks = rs
 	}
 	var plans []Document
 	if page, err := s.c.List(ctx, "IProjectPlanRXs", odata.Query{

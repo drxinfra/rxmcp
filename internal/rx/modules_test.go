@@ -106,7 +106,7 @@ func TestProjects(t *testing.T) {
 		t.Fatalf("project: %v %d", err, len(plans))
 	}
 	card := s.F.ProjectCard(*p, plans)
-	for _, want := range []string{"Проект #2: Проект", "руководство: Руководитель", "участники: Иванов Иван", "G1 · план 01.06.2026 · пройден 02.06.2026", "#55 План проекта · черновик"} {
+	for _, want := range []string{"Проект #2: Проект", "руководство: Руководитель", "участники: Иванов Иван", "#1 G1 · план 01.06.2026 · достигнута 02.06.2026", "#55 План проекта · черновик"} {
 		if !strings.Contains(card, want) {
 			t.Errorf("project card без %q:\n%s", want, card)
 		}

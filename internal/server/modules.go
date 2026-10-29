@@ -260,7 +260,7 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_project",
-		Description: "Карточка проекта: стадия, плановые и фактические сроки, руководитель, заказчик, команда по группам, гейты, описание и список планов с их Id. Используйте для вопроса «в каком состоянии проект и кто в нём участвует». Id проекта берётся из rx_projects. Дерево работ показывает rx_project_plan. Только чтение.",
+		Description: "Карточка проекта: стадия, плановые и фактические сроки, руководитель, заказчик, команда по группам, контрольные точки с Id (для rx_update_gate), число рисков, описание и список планов с их Id. Используйте для вопроса «в каком состоянии проект и кто в нём участвует». Id проекта берётся из rx_projects. Дерево работ показывает rx_project_plan. Только чтение.",
 		Annotations: ro("Проект"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectIDIn) (*mcp.CallToolResult, any, error) {
 		p, plans, err := s.svc.ProjectByID(ctx, in.ID)

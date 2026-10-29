@@ -281,6 +281,168 @@
       }
     },
     {
+      "name": "rx_create_gates",
+      "description": "Создать контрольные точки (цели проекта) и добавить их в карточку проекта, до 30 за вызов. У каждой обязательны название и плановая дата; уровень КТ-0, КТ-1, КТ-2, описание ожидаемого результата, ответственный, владелец и контролёр по желанию. Владелец и ответственный по умолчанию руководитель проекта. Ввод проверяется целиком до записи. Если карточка проекта открыта кем-то на изменение, RX откажет: её нужно закрыть. Нужны права на изменение проекта. Текущие КТ проекта показывает rx_project. Меняет данные в RX. Перед вызовом покажите пользователю список КТ с датами.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "description": "Id проекта: число после # в строке rx_projects"
+          },
+          "gates": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "название: ожидаемый результат кратко, например «Утверждено ТЗ»"
+                },
+                "plan_date": {
+                  "type": "string",
+                  "description": "дата (план): ГГГГ-ММ-ДД или ДД.ММ.ГГГГ"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "описание ожидаемого результата и критерии достижения"
+                },
+                "level": {
+                  "type": "string",
+                  "description": "уровень контроля: КТ-0, КТ-1 или КТ-2"
+                },
+                "performer": {
+                  "type": "string",
+                  "description": "ответственный: фамилия или Id; по умолчанию руководитель проекта"
+                },
+                "owner": {
+                  "type": "string",
+                  "description": "владелец: фамилия или Id; по умолчанию руководитель проекта"
+                },
+                "supervisor": {
+                  "type": "string",
+                  "description": "контролёр: фамилия или Id"
+                },
+                "assessment": {
+                  "type": "string",
+                  "description": "прогноз: в срок, есть несущественные риски, под угрозой"
+                },
+                "note": {
+                  "type": "string",
+                  "description": "примечание"
+                }
+              },
+              "required": [
+                "name",
+                "plan_date"
+              ],
+              "additionalProperties": false
+            },
+            "description": "контрольные точки, до 30 за вызов"
+          }
+        },
+        "required": [
+          "project_id",
+          "gates"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Создать контрольные точки"
+      }
+    },
+    {
+      "name": "rx_create_risks",
+      "description": "Создать риски в реестре рисков проекта, до 30 за вызов: так сгенерированный реестр переносится в RX без ручного ввода. У каждого риска обязательны название, описание, вероятность и влияние; вероятность, влияние и категорию берите из справочников rx_project_risks. Ответственный по умолчанию руководитель проекта, статус «Идентифицирован». Ввод проверяется целиком до записи. Перед созданием посмотрите rx_project_risks, чтобы не завести дубли. Нужны права на изменение проекта. Меняет данные в RX. Перед вызовом покажите пользователю список рисков.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "description": "Id проекта: число после # в строке rx_projects"
+          },
+          "risks": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "название риска: коротко, что может случиться"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "описание: причины, признаки, последствия; в RX обязательно"
+                },
+                "probability": {
+                  "type": "string",
+                  "description": "вероятность: название из справочника (например «Высокая»), процент или Id; справочник показывает rx_project_risks"
+                },
+                "impact": {
+                  "type": "string",
+                  "description": "влияние: название из справочника (например «Средние») или Id"
+                },
+                "category": {
+                  "type": "string",
+                  "description": "категория: название из справочника (например «Ресурсный») или Id"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "risk (риск, по умолчанию) или possibility (возможность)"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "статус: идентифицирован (по умолчанию), отслеживается, предотвращается, реализовался, устраняется, устранён, не актуален"
+                },
+                "mitigation_plan": {
+                  "type": "string",
+                  "description": "план предотвращения: меры, чтобы риск не случился"
+                },
+                "contingency_plan": {
+                  "type": "string",
+                  "description": "план устранения последствий, если риск случится"
+                },
+                "responsible": {
+                  "type": "string",
+                  "description": "ответственный: фамилия или Id сотрудника; по умолчанию руководитель проекта"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "probability",
+                "impact"
+              ],
+              "additionalProperties": false
+            },
+            "description": "риски, до 30 за вызов"
+          }
+        },
+        "required": [
+          "project_id",
+          "risks"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Создать риски проекта"
+      }
+    },
+    {
       "name": "rx_create_simple_task",
       "description": "Создать простую задачу и сразу отправить её исполнителям: они получат задания. Нужны тема, срок и Id исполнителей из rx_find_employees. draft=true оставит черновик без отправки, notice=true отправит уведомление без ожидания выполнения. Меняет данные в RX. Для карточки на agile-доске используйте rx_create_ticket. Перед вызовом перескажите пользователю тему, исполнителей и срок.",
       "inputSchema": {
@@ -1049,7 +1211,7 @@
     },
     {
       "name": "rx_project",
-      "description": "Карточка проекта: стадия, плановые и фактические сроки, руководитель, заказчик, команда по группам, гейты, описание и список планов с их Id. Используйте для вопроса «в каком состоянии проект и кто в нём участвует». Id проекта берётся из rx_projects. Дерево работ показывает rx_project_plan. Только чтение.",
+      "description": "Карточка проекта: стадия, плановые и фактические сроки, руководитель, заказчик, команда по группам, контрольные точки с Id (для rx_update_gate), число рисков, описание и список планов с их Id. Используйте для вопроса «в каком состоянии проект и кто в нём участвует». Id проекта берётся из rx_projects. Дерево работ показывает rx_project_plan. Только чтение.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1123,6 +1285,29 @@
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Планы проектов"
+      }
+    },
+    {
+      "name": "rx_project_risks",
+      "description": "Риски проекта, как в реестре рисков карточки проекта: Id, название, статус, категория, вероятность, влияние, ответственный, описание и планы предотвращения и устранения последствий. В конце справочники вероятности, влияния, категорий и статусов: по ним заполняются rx_create_risks и rx_update_risk. Контрольные точки проекта показывает rx_project. Только чтение.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "description": "Id проекта: число после # в строке rx_projects"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Риски проекта"
       }
     },
     {
@@ -1338,6 +1523,33 @@
       }
     },
     {
+      "name": "rx_ticket_history",
+      "description": "История карточки agile-доски, как вкладка «История»: кто и когда создал карточку, двигал по колонкам, менял статус, срок, план и факт, исполнителей, теги, заголовок и описание. От старых событий к новым, по умолчанию последние 30. Используйте на вопросы «когда карточку закрыли», «кто её двигал», «сколько она висела в работе», «когда поменяли срок». Нужен числовой Id карточки из rx_tickets или rx_board. Сама карточка и комментарии: rx_ticket. Только чтение.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "сколько последних событий показать, по умолчанию 30, максимум 200"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "История карточки"
+      }
+    },
+    {
       "name": "rx_ticket_relations",
       "description": "Связи карточек agile-доски с другими карточками, как блок «Связи» в карточке: родитель и дочерние, «зависит от» и «обязательна для», дубли, «связана с»; у каждой связанной карточки код, id, статус и доска, если она другая. До 50 карточек за раз. Используйте на вопросы «какие подзадачи у эпика», «что блокирует карточку», «где дубль», «к чему относится карточка». Нужны числовые Id карточек из rx_tickets или rx_board. Для одной карточки связи уже есть в rx_ticket. Только чтение.",
       "inputSchema": {
@@ -1364,33 +1576,6 @@
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Связи карточек"
-      }
-    },
-    {
-      "name": "rx_ticket_history",
-      "description": "История карточки agile-доски, как вкладка «История»: кто и когда создал карточку, двигал по колонкам, менял статус, срок, план и факт, исполнителей, теги, заголовок и описание. От старых событий к новым, по умолчанию последние 30. Используйте на вопросы «когда карточку закрыли», «кто её двигал», «сколько она висела в работе», «когда поменяли срок». Нужен числовой Id карточки из rx_tickets или rx_board. Сама карточка и комментарии: rx_ticket. Только чтение.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"
-          },
-          "limit": {
-            "type": "integer",
-            "description": "сколько последних событий показать, по умолчанию 30, максимум 200"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": true,
-        "title": "История карточки"
       }
     },
     {
@@ -1455,6 +1640,141 @@
         "openWorldHint": false,
         "readOnlyHint": false,
         "title": "Изменить статью"
+      }
+    },
+    {
+      "name": "rx_update_gate",
+      "description": "Изменить контрольную точку проекта: отметить достигнутой (passed=true и actual_date), поменять прогноз, плановую или прогнозную дату, описание, уровень, ответственного, владельца, контролёра. Меняются только переданные поля; строку в карточке проекта RX обновит сам. Id КТ из блока «Контрольные точки» rx_project. Меняет данные в RX. Перед вызовом перескажите пользователю, что меняется.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Id контрольной точки: число после # в блоке «Контрольные точки» rx_project"
+          },
+          "name": {
+            "type": "string",
+            "description": "новое название; не передавайте, если не меняется"
+          },
+          "description": {
+            "type": "string",
+            "description": "новое описание целиком"
+          },
+          "plan_date": {
+            "type": "string",
+            "description": "новая дата (план): ГГГГ-ММ-ДД"
+          },
+          "actual_date": {
+            "type": "string",
+            "description": "дата (факт), а пока КТ не достигнута, прогнозная дата: ГГГГ-ММ-ДД или «сегодня»"
+          },
+          "passed": {
+            "type": [
+              "null",
+              "boolean"
+            ],
+            "description": "true = контрольная точка достигнута (вместе с actual_date)"
+          },
+          "level": {
+            "type": "string",
+            "description": "уровень контроля: КТ-0, КТ-1 или КТ-2"
+          },
+          "assessment": {
+            "type": "string",
+            "description": "прогноз: в срок, есть несущественные риски, под угрозой"
+          },
+          "performer": {
+            "type": "string",
+            "description": "ответственный: фамилия или Id"
+          },
+          "owner": {
+            "type": "string",
+            "description": "владелец: фамилия или Id"
+          },
+          "supervisor": {
+            "type": "string",
+            "description": "контролёр: фамилия или Id"
+          },
+          "note": {
+            "type": "string",
+            "description": "примечание"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Изменить контрольную точку"
+      }
+    },
+    {
+      "name": "rx_update_risk",
+      "description": "Изменить риск проекта: статус, описание, планы предотвращения и устранения последствий, вероятность, влияние, категорию, ответственного, название. Меняются только переданные поля; текстовые поля заменяются целиком. Id риска из rx_project_risks. Меняет данные в RX. Перед вызовом перескажите пользователю, что меняется.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Id риска: число после # в rx_project_risks"
+          },
+          "name": {
+            "type": "string",
+            "description": "новое название; не передавайте, если не меняется"
+          },
+          "description": {
+            "type": "string",
+            "description": "новое описание целиком"
+          },
+          "probability": {
+            "type": "string",
+            "description": "вероятность: название, процент или Id"
+          },
+          "impact": {
+            "type": "string",
+            "description": "влияние: название или Id"
+          },
+          "category": {
+            "type": "string",
+            "description": "категория: название или Id"
+          },
+          "type": {
+            "type": "string",
+            "description": "risk или possibility"
+          },
+          "status": {
+            "type": "string",
+            "description": "статус: идентифицирован, отслеживается, предотвращается, реализовался, устраняется, устранён, не актуален"
+          },
+          "mitigation_plan": {
+            "type": "string",
+            "description": "план предотвращения целиком"
+          },
+          "contingency_plan": {
+            "type": "string",
+            "description": "план устранения последствий целиком"
+          },
+          "responsible": {
+            "type": "string",
+            "description": "ответственный: фамилия или Id"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Изменить риск"
       }
     },
     {
@@ -1608,7 +1928,7 @@
       }
     }
   ],
-  "version": "0.15.1",
+  "version": "0.16.0",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
   "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",
