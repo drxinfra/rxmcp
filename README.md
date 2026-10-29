@@ -234,7 +234,7 @@ docker run --rm -p 127.0.0.1:8765:8765 \
 
 ```sh
 go build -o rxmcp .          # нужен Go 1.27+
-hack/build.sh v0.14.0         # архивы под все платформы в dist/
+hack/build.sh v0.15.0         # архивы под все платформы в dist/
 go test ./...
 ```
 
