@@ -155,6 +155,10 @@ type ticketIDIn struct {
 	ID int64 `json:"id" jsonschema:"числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"`
 }
 
+type ticketRelationsIn struct {
+	IDs []int64 `json:"ids" jsonschema:"числовые Id карточек (значение id в скобках в строках rx_tickets и rx_board), до 50; коды вида ABC-12 не подходят"`
+}
+
 type ticketHistoryIn struct {
 	ID    int64 `json:"id" jsonschema:"числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"`
 	Limit int   `json:"limit,omitempty" jsonschema:"сколько последних событий показать, по умолчанию 30, максимум 200"`

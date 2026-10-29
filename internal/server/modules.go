@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/drxinfra/rxmcp/internal/odata"
 	"github.com/drxinfra/rxmcp/internal/rx"
 	"github.com/drxinfra/rxmcp/internal/textx"
 )
@@ -182,14 +183,32 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket",
-		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Кто и когда менял карточку: rx_ticket_history.",
+		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Связи с другими карточками (родитель, дочерние, зависимости, дубли) выводятся в блоке «Связи»; связи нескольких карточек сразу: rx_ticket_relations. Кто и когда менял карточку: rx_ticket_history.",
 		Annotations: ro("Карточка"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketIDIn) (*mcp.CallToolResult, any, error) {
 		t, err := s.svc.TicketByID(ctx, in.ID)
 		if err != nil {
 			return fail(err)
 		}
-		return text(s.svc.F.TicketCard(*t) + s.ticketComments(ctx, t)), nil, nil
+		return text(s.svc.F.TicketCard(*t) + s.ticketRelations(ctx, t) + s.ticketComments(ctx, t)), nil, nil
+	})
+	mcp.AddTool(s.MCP, &mcp.Tool{
+		Name:        "rx_ticket_relations",
+		Description: "Связи карточек agile-доски с другими карточками, как блок «Связи» в карточке: родитель и дочерние, «зависит от» и «обязательна для», дубли, «связана с»; у каждой связанной карточки код, id, статус и доска, если она другая. До 50 карточек за раз. Используйте на вопросы «какие подзадачи у эпика», «что блокирует карточку», «где дубль», «к чему относится карточка». Нужны числовые Id карточек из rx_tickets или rx_board. Для одной карточки связи уже есть в rx_ticket. Только чтение.",
+		Annotations: ro("Связи карточек"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketRelationsIn) (*mcp.CallToolResult, any, error) {
+		ids := uniqueIDs(in.IDs)
+		if len(ids) == 0 {
+			return fail(fmt.Errorf("нужен хотя бы один Id карточки"))
+		}
+		if len(ids) > maxRelationTickets {
+			return fail(fmt.Errorf("за раз не больше %d карточек, передано %d", maxRelationTickets, len(ids)))
+		}
+		rs, err := s.svc.BatchRelations(ctx, ids)
+		if err != nil {
+			return fail(err)
+		}
+		return text(s.svc.F.RelationsBatch(rs)), nil, nil
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket_history",
@@ -365,6 +384,36 @@ type deleteCommentIn struct {
 
 // ticketComments дописывает к карточке блок комментариев. Сбой чтения комментариев
 // карточку не роняет: модель получает карточку и причину, почему комментариев нет.
+// ticketRelations блок «Связи» карточки; сбой чтения связей не мешает самой карточке.
+func (s *Server) ticketRelations(ctx context.Context, t *rx.Ticket) string {
+	r, err := s.svc.Relations(ctx, t.ID)
+	var oe *odata.Error
+	if errors.As(err, &oe) && oe.Status == 404 {
+		return "" // версия RX без связей карточек
+	}
+	if err != nil {
+		return fmt.Sprintf("\nСвязи прочитать не удалось: %v", err)
+	}
+	if len(r.Relations) == 0 && r.Denied == 0 {
+		return ""
+	}
+	return "\n" + s.svc.F.Relations(*r, t.BoardID)
+}
+
+const maxRelationTickets = 50
+
+func uniqueIDs(ids []int64) []int64 {
+	seen := map[int64]bool{}
+	var out []int64
+	for _, id := range ids {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func (s *Server) ticketComments(ctx context.Context, t *rx.Ticket) string {
 	if t.Comments == 0 {
 		return ""
