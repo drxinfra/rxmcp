@@ -476,7 +476,30 @@ func (c *Client) Delete(ctx context.Context, set string, id int64) error {
 	return err
 }
 
+// ActionBinary вызывает действие, которое возвращает файл (Edm.Binary): RX отдаёт его
+// base64-строкой в {"value": …}. Ответ читается до MaxBody, а не до 1 МБ, как у прочих действий.
+func (c *Client) ActionBinary(ctx context.Context, module, action string, params map[string]any) ([]byte, error) {
+	data, err := c.sendN(ctx, http.MethodPost, module+"/"+action, params, c.MaxBody+1)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > c.MaxBody {
+		return nil, fmt.Errorf("ответ больше %d МБ, не читаем", c.MaxBody>>20)
+	}
+	var r struct {
+		Value []byte `json:"value"` // encoding/json раскрывает base64 сам
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("%s/%s: ответ не разобран: %w", module, action, err)
+	}
+	return r.Value, nil
+}
+
 func (c *Client) send(ctx context.Context, method, path string, params map[string]any) ([]byte, error) {
+	return c.sendN(ctx, method, path, params, 1<<20)
+}
+
+func (c *Client) sendN(ctx context.Context, method, path string, params map[string]any, limit int64) ([]byte, error) {
 	var body io.Reader
 	if params != nil || method == http.MethodPost {
 		payload, err := json.Marshal(params)
@@ -499,7 +522,7 @@ func (c *Client) send(ctx context.Context, method, path string, params map[strin
 		return nil, netErr(err)
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
 	c.debug(method, path, resp.StatusCode, len(data))
 	if Debug && resp.StatusCode >= 300 {
 		b := data

@@ -181,15 +181,3 @@ func (s *Service) uploadFile(ctx context.Context, path string) (string, error) {
 	}
 	return fmt.Sprintf("storage://%d&%s", r.Value, ct), nil
 }
-
-// attachmentKind подпись вида вложения для карточки.
-func attachmentKind(u string) string {
-	switch {
-	case strings.HasPrefix(u, "storage://"):
-		return "файл"
-	case idFromURL(u) != 0:
-		return fmt.Sprintf("id %d", idFromURL(u))
-	default:
-		return u
-	}
-}

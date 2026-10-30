@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -46,6 +47,11 @@ func New(c *odata.Client, login string, userID int64, pageSize, maxPage int, f F
 	}
 	if maxPage <= 0 {
 		maxPage = 100
+	}
+	if f.Host == "" && c != nil {
+		if u, err := url.Parse(c.Base()); err == nil {
+			f.Host = u.Hostname()
+		}
 	}
 	return &Service{c: c, login: login, userID: userID, pageSize: pageSize, maxPage: maxPage, F: f}
 }

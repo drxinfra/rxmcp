@@ -46,6 +46,9 @@ func Status(s string) string {
 type Formatter struct {
 	Loc *time.Location
 	Now func() time.Time
+	// Host хост стенда RX: гиперссылка Sungero?…&id= на другой хост ведёт на чужой
+	// стенд, и её id нельзя читать здесь. Пусто значит «не проверять».
+	Host string
 }
 
 func (f Formatter) now() time.Time {

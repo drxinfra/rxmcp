@@ -76,7 +76,7 @@ func TestBoards(t *testing.T) {
 		t.Fatal(err)
 	}
 	tc := s.F.TicketCard(*tk)
-	for _, want := range []string{"Карточка DK-3 (id 245)", "приоритет 8/10", "Исполнители: Иванов Иван", "Трудоёмкость: план 4.5", "Теги: bug", "Задача З-20 (id 20)", "Сделать хорошо"} {
+	for _, want := range []string{"Карточка DK-3 (id 245)", "приоритет 8/10", "Исполнители: Иванов Иван", "Трудоёмкость: план 4.5", "Теги: bug", "1. Задача З-20 · объект RX id 20", "Сделать хорошо"} {
 		if !strings.Contains(tc, want) {
 			t.Errorf("ticket card без %q:\n%s", want, tc)
 		}

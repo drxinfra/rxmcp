@@ -80,8 +80,8 @@ func TestToolsetFilters(t *testing.T) {
 			t.Errorf("%s виден, хотя набора нет в RXMCP_TOOLS", n)
 		}
 	}
-	if len(got) > 29 {
-		t.Errorf("инструментов %d, ожидалось не больше 29", len(got))
+	if len(got) > 30 {
+		t.Errorf("инструментов %d, ожидалось не больше 30", len(got))
 	}
 	if strings.Contains(init.Instructions, "rx_help_search") {
 		t.Error("инструкции зовут rx_help_search, которого нет в наборе")

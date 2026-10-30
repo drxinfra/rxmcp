@@ -183,15 +183,12 @@ func (s *Server) registerModules() {
 	})
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket",
-		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Связи с другими карточками (родитель, дочерние, зависимости, дубли) выводятся в блоке «Связи»; связи нескольких карточек сразу: rx_ticket_relations. Кто и когда менял карточку: rx_ticket_history.",
+		Description: "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, пронумерованные вложения и картинки, описание и комментарии с авторами и временем. Картинки из описания, комментариев и вложений (скриншоты ошибок) приходят изображениями, до 4 штук; text_only=true отключает их, когда карточек много подряд. Вложение по номеру (docx, xlsx, pdf, txt, json, логи, документ RX) читает rx_ticket_file. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Связи с другими карточками (родитель, дочерние, зависимости, дубли) выводятся в блоке «Связи»; связи нескольких карточек сразу: rx_ticket_relations. Кто и когда менял карточку: rx_ticket_history.",
 		Annotations: ro("Карточка"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketIDIn) (*mcp.CallToolResult, any, error) {
-		t, err := s.svc.TicketByID(ctx, in.ID)
-		if err != nil {
-			return fail(err)
-		}
-		return text(s.svc.F.TicketCard(*t) + s.ticketRelations(ctx, t) + s.ticketComments(ctx, t)), nil, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ticketIn) (*mcp.CallToolResult, any, error) {
+		return s.ticketResult(ctx, in)
 	})
+	s.registerTicketFiles()
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_ticket_relations",
 		Description: "Связи карточек agile-доски с другими карточками, как блок «Связи» в карточке: родитель и дочерние, «зависит от» и «обязательна для», дубли, «связана с»; у каждой связанной карточки код, id, статус и доска, если она другая. До 50 карточек за раз. Используйте на вопросы «какие подзадачи у эпика», «что блокирует карточку», «где дубль», «к чему относится карточка». Нужны числовые Id карточек из rx_tickets или rx_board. Для одной карточки связи уже есть в rx_ticket. Только чтение.",
@@ -412,20 +409,6 @@ func uniqueIDs(ids []int64) []int64 {
 		}
 	}
 	return out
-}
-
-func (s *Server) ticketComments(ctx context.Context, t *rx.Ticket) string {
-	if t.Comments == 0 {
-		return ""
-	}
-	cs, err := s.svc.TicketComments(ctx, t)
-	if err != nil {
-		return fmt.Sprintf("\nКомментарии прочитать не удалось: %v", err)
-	}
-	if len(cs) == 0 {
-		return ""
-	}
-	return "\n" + s.svc.F.Comments(cs)
 }
 
 type deleteTicketsIn struct {

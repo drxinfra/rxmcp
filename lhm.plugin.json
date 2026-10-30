@@ -931,6 +931,10 @@
           "as_images": {
             "type": "boolean",
             "description": "true = отдать страницы PDF картинками, даже если текстовый слой есть; нужно, когда часть страниц сканы или важны печати и подписи"
+          },
+          "grep": {
+            "type": "string",
+            "description": "показать только строки с этой подстрокой (регистр не важен) и их номера; для логов и длинных текстов, например ERROR или номер договора"
           }
         },
         "required": [
@@ -1501,13 +1505,17 @@
     },
     {
       "name": "rx_ticket",
-      "description": "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, вложения, описание и комментарии с авторами и временем. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Связи с другими карточками (родитель, дочерние, зависимости, дубли) выводятся в блоке «Связи»; связи нескольких карточек сразу: rx_ticket_relations. Кто и когда менял карточку: rx_ticket_history.",
+      "description": "Одна карточка agile-доски целиком: статус, колонка, исполнители, сроки, трудоёмкость, теги, пронумерованные вложения и картинки, описание и комментарии с авторами и временем. Картинки из описания, комментариев и вложений (скриншоты ошибок) приходят изображениями, до 4 штук; text_only=true отключает их, когда карточек много подряд. Вложение по номеру (docx, xlsx, pdf, txt, json, логи, документ RX) читает rx_ticket_file. Нужен числовой Id карточки: значение id в скобках из rx_tickets или rx_board. Код вида ABC-12 сюда не подходит, по коду ищет rx_tickets. Только чтение, изменить карточку можно через rx_update_ticket, добавить комментарий через rx_comment_ticket. Связи с другими карточками (родитель, дочерние, зависимости, дубли) выводятся в блоке «Связи»; связи нескольких карточек сразу: rx_ticket_relations. Кто и когда менял карточку: rx_ticket_history.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "id": {
             "type": "integer",
             "description": "числовой Id карточки: значение id в скобках в строках rx_tickets и rx_board; код вида ABC-12 не подходит"
+          },
+          "text_only": {
+            "type": "boolean",
+            "description": "true = без картинок, только текст карточки; удобно, когда карточек много подряд"
           }
         },
         "required": [
@@ -1520,6 +1528,61 @@
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Карточка"
+      }
+    },
+    {
+      "name": "rx_ticket_file",
+      "description": "Прочитать вложение или картинку карточки agile-доски по номеру из блока «Вложения и картинки» в rx_ticket. Файл из хранилища доски: docx, xlsx, pptx, pdf (скан страницами-картинками), txt, md, csv, json, xml, html, rtf, картинки; у zip, tar и tar.gz список файлов внутри, файл изнутри читается с path; одиночный .gz распаковывается. Ссылка на документ RX читается как rx_get_document_text, внешние ссылки не открываются. Без item вернёт список файлов карточки. Длинный текст обрезается по max_chars, продолжение через offset; в логах ищите строки через grep. Только чтение.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "числовой Id карточки (из rx_tickets или rx_board)"
+          },
+          "item": {
+            "type": "integer",
+            "description": "номер файла из блока «Вложения и картинки» в rx_ticket; без номера вернётся список"
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "лимит символов текста, по умолчанию из настроек сервера"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "с какого символа продолжить, если текст обрезан"
+          },
+          "page_from": {
+            "type": "integer",
+            "description": "для скана pdf и as_images: с какой страницы показывать картинки, с 1"
+          },
+          "pages": {
+            "type": "integer",
+            "description": "для скана pdf и as_images: сколько страниц картинками, по умолчанию 3, максимум 10"
+          },
+          "as_images": {
+            "type": "boolean",
+            "description": "true = страницы pdf картинками, даже если текстовый слой есть"
+          },
+          "path": {
+            "type": "string",
+            "description": "для zip, tar, tar.gz: путь файла внутри архива из списка, который вернёт вызов без path"
+          },
+          "grep": {
+            "type": "string",
+            "description": "показать только строки с этой подстрокой (регистр не важен) и их номера; для логов, например ERROR"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Файл карточки"
       }
     },
     {
@@ -1928,7 +1991,7 @@
       }
     }
   ],
-  "version": "0.16.0",
+  "version": "0.17.0",
   "authorUrl": "https://github.com/drxinfra",
   "category": "productivity",
   "icon": "https://raw.githubusercontent.com/drxinfra/rxmcp/main/assets/icon-512.png",
