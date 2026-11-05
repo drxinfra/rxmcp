@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -33,9 +34,33 @@ func (b bearerRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(r)
 }
 
-// Сквозной HTTP-режим с персональными учётками: токен Keycloak → rxmcp → RX с тем же токеном,
-// у каждого пользователя свой логин, чужие и испорченные токены не проходят.
-func TestUsersHTTPMode(t *testing.T) {
+// usersEnv HTTP-режим с персональными учётками на фейках: провайдер OIDC выдаёт подписанные
+// токены, RX узнаёт пользователя по токену и запоминает, что тот запрашивал.
+type usersEnv struct {
+	srv  *httptest.Server
+	sign func(user string, roles ...string) string
+
+	mu        sync.Mutex
+	seen      map[string]string // пользователь → последний путь в RX
+	tokens    map[string]string // токен → пользователь
+	completed map[string]int    // пользователь → сколько раз выполнил задание #5
+}
+
+func (e *usersEnv) token(user string) string {
+	tok := e.sign(user, "rx-assistant")
+	e.mu.Lock()
+	e.tokens[tok] = user
+	e.mu.Unlock()
+	return tok
+}
+
+func (e *usersEnv) client(token string, opts *mcp.ClientOptions) (*mcp.ClientSession, error) {
+	return mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, opts).Connect(context.Background(),
+		&mcp.StreamableClientTransport{Endpoint: e.srv.URL + "/mcp", HTTPClient: &http.Client{Transport: bearerRT{token}}}, nil)
+}
+
+func newUsersEnv(t *testing.T, log *slog.Logger) *usersEnv {
+	t.Helper()
 	t.Setenv("RXMCP_HOME", t.TempDir())
 	b64 := base64.RawURLEncoding
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -51,8 +76,9 @@ func TestUsersHTTPMode(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer idp.Close()
-	sign := func(user string, roles ...string) string {
+	t.Cleanup(idp.Close)
+	e := &usersEnv{seen: map[string]string{}, tokens: map[string]string{}, completed: map[string]int{}}
+	e.sign = func(user string, roles ...string) string {
 		h, _ := json.Marshal(map[string]any{"alg": "RS256", "kid": "k"})
 		rs := []any{}
 		for _, r := range roles {
@@ -67,23 +93,21 @@ func TestUsersHTTPMode(t *testing.T) {
 	}
 
 	// RX: какой токен пришёл, тот пользователь и есть; запоминаем, что видели.
-	var mu sync.Mutex
-	seen := map[string]string{}
-	tokens := map[string]string{}
 	rxs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		mu.Lock()
-		user := tokens[tok]
+		e.mu.Lock()
+		user := e.tokens[tok]
 		if user != "" {
-			seen[user] = r.URL.Path
+			e.seen[user] = r.URL.Path
 		}
-		mu.Unlock()
+		e.mu.Unlock()
 		if user == "" {
 			w.WriteHeader(401)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "/IUsers") {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/IUsers"):
 			f := r.URL.Query().Get("$filter")
 			id := map[string]int{"ivanov": 7, "petrov": 8}[user]
 			if !strings.Contains(f, "'"+user+"'") {
@@ -91,11 +115,18 @@ func TestUsersHTTPMode(t *testing.T) {
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"value": []any{map[string]any{"Id": id, "Name": strings.ToUpper(user[:1]) + user[1:], "Login": map[string]any{"LoginName": user}}}})
-			return
+		case strings.HasSuffix(r.URL.Path, "/IAssignments(5)"):
+			json.NewEncoder(w).Encode(map[string]any{"@odata.type": "#X.Workflow.ISimpleAssignmentDto", "Id": 5, "Subject": "Проверить", "Status": "InProcess"})
+		case strings.HasSuffix(r.URL.Path, "/Docflow/CompleteAssignment"):
+			e.mu.Lock()
+			e.completed[user]++
+			e.mu.Unlock()
+			w.WriteHeader(204)
+		default:
+			w.WriteHeader(404)
 		}
-		w.WriteHeader(404)
 	}))
-	defer rxs.Close()
+	t.Cleanup(rxs.Close)
 
 	t.Setenv("RXMCP_URL", rxs.URL)
 	t.Setenv("RXMCP_AUTH", "passthrough")
@@ -113,17 +144,24 @@ func TestUsersHTTPMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.URL = strings.TrimSuffix(rxs.URL, "/odata")
-	h, err := usersHandler(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	h, err := usersHandler(cfg, log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(h)
-	defer srv.Close()
+	e.srv = httptest.NewServer(h)
+	t.Cleanup(e.srv.Close)
+	return e
+}
 
+// Сквозной HTTP-режим с персональными учётками: токен Keycloak → rxmcp → RX с тем же токеном,
+// у каждого пользователя свой логин, чужие и испорченные токены не проходят.
+func TestUsersHTTPMode(t *testing.T) {
+	e := newUsersEnv(t, nil)
 	whoami := func(token string) (string, error) {
-		c := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		cs, err := c.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: srv.URL + "/mcp",
-			HTTPClient: &http.Client{Transport: bearerRT{token}}}, nil)
+		cs, err := e.client(token, nil)
 		if err != nil {
 			return "", err
 		}
@@ -134,26 +172,104 @@ func TestUsersHTTPMode(t *testing.T) {
 		}
 		return res.Content[0].(*mcp.TextContent).Text, nil
 	}
-	ti, tp := sign("ivanov", "rx-assistant"), sign("petrov", "rx-assistant")
-	mu.Lock()
-	tokens[ti], tokens[tp] = "ivanov", "petrov"
-	mu.Unlock()
+	ti, tp := e.token("ivanov"), e.token("petrov")
 	for user, tok := range map[string]string{"Ivanov": ti, "Petrov": tp} {
 		out, err := whoami(tok)
 		if err != nil || !strings.Contains(out, user) {
 			t.Errorf("%s: %q %v", user, out, err)
 		}
 	}
-	if seen["ivanov"] == "" || seen["petrov"] == "" {
-		t.Errorf("RX не получил токены пользователей: %v", seen)
+	if e.seen["ivanov"] == "" || e.seen["petrov"] == "" {
+		t.Errorf("RX не получил токены пользователей: %v", e.seen)
 	}
 	if _, err := whoami(""); err == nil {
 		t.Error("без токена пустили")
 	}
-	if _, err := whoami(sign("sidorov")); err == nil {
+	if _, err := whoami(e.sign("sidorov")); err == nil {
 		t.Error("без роли rx-assistant пустили")
 	}
 	if _, err := whoami(ti[:len(ti)-4] + "AAAA"); err == nil {
 		t.Error("с испорченной подписью пустили")
 	}
 }
+
+// Подтверждение записи в HTTP-режиме с персональными учётками (протокол 2026-07-28): сервер
+// собирается на каждый запрос, ответ на форму приходит уже в другой экземпляр и принимается
+// только от того же пользователя и только один раз.
+func TestUsersHTTPConfirm(t *testing.T) {
+	t.Setenv("RXMCP_ALLOW_WRITE", "1")
+	var logBuf strings.Builder
+	var logMu sync.Mutex
+	e := newUsersEnv(t, slog.New(slog.NewTextHandler(writerFunc(func(p []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return logBuf.Write(p)
+	}), nil)))
+	manual := &mcp.ClientOptions{
+		ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+			return nil, errors.New("форму показывает тест")
+		},
+		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
+	}
+	call := func(token string, answers mcp.InputResponseMap, state string) *mcp.CallToolResult {
+		t.Helper()
+		cs, err := e.client(token, manual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cs.Close()
+		if v := cs.InitializeResult().ProtocolVersion; v != "2026-07-28" {
+			t.Fatalf("протокол %s", v)
+		}
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "rx_complete_assignment",
+			Arguments: map[string]any{"id": 5}, InputResponses: answers, RequestState: state})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	text := func(res *mcp.CallToolResult) string {
+		if len(res.Content) == 0 {
+			return ""
+		}
+		return res.Content[0].(*mcp.TextContent).Text
+	}
+	accept := mcp.InputResponseMap{"confirm": &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
+	ti, tp := e.token("ivanov"), e.token("petrov")
+
+	first := call(ti, nil, "")
+	if p, _ := first.InputRequests["confirm"].(*mcp.ElicitParams); !first.NeedsInput() || p == nil || p.Message != "Завершить простое задание #5 «Проверить»?" {
+		t.Fatalf("первый заход не форма: %+v", first)
+	}
+	// Петров предъявляет requestState Иванова: для него это новый вызов, снова форма.
+	if res := call(tp, accept, first.RequestState); !res.NeedsInput() {
+		t.Errorf("чужой ответ принят: %q", text(res))
+	}
+	e.mu.Lock()
+	n := len(e.completed)
+	e.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("без согласия в RX ушло выполнение: %v", e.completed)
+	}
+	if res := call(ti, accept, first.RequestState); res.IsError || text(res) != "Задание #5 (простое задание) завершено с результатом Complete." {
+		t.Errorf("ответ Иванова: %q", text(res))
+	}
+	if res := call(ti, accept, first.RequestState); !res.IsError {
+		t.Errorf("повтор того же ответа: %q", text(res))
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.completed["ivanov"] != 1 || e.completed["petrov"] != 0 {
+		t.Errorf("выполнения в RX: %v", e.completed)
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	if !strings.Contains(logBuf.String(), "user=ivanov tool=rx_complete_assignment params=id error=false") ||
+		strings.Count(logBuf.String(), "awaiting=confirmation") != 2 {
+		t.Errorf("журнал вызовов:\n%s", logBuf.String())
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

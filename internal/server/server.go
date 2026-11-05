@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -31,17 +32,23 @@ type Options struct {
 	StateDir     string          // каталог для отметки rx_whats_new; пусто = отметка не хранится
 	StateKey     string          // стенд и пользователь, чтобы отметки разных RX не смешивались
 	Host         string          // хост RX: в названии и описании сервера, чтобы помощник различал системы
-	User         string          // HTTP-режим с персональными учётками: кто вызывает, для журнала
+	User         string          // HTTP-режим с персональными учётками: кто вызывает, для журнала и подтверждений
 	Tools        map[string]bool // RXMCP_TOOLS: какие инструменты оставить (ParseTools); nil = все
+	// Ожидания ответа на форму подтверждения (протокол 2026-07-28); nil = общий склад процесса.
+	Confirmations *Confirmations
 }
 
 // Server обёртка над mcp.Server.
 type Server struct {
-	MCP *mcp.Server
-	svc *rx.Service
-	opt Options
-	log *slog.Logger
-	upd updateNotice
+	MCP      *mcp.Server
+	svc      *rx.Service
+	opt      Options
+	log      *slog.Logger
+	upd      updateNotice
+	confirms *Confirmations
+
+	noFormMu   sync.Mutex
+	noFormSeen map[string]struct{} // сеансы, о которых уже написали, что формы не будет
 }
 
 const instructions = `Это Directum RX пользователя. Инструменты rx_* читают задания, задачи и документы от его имени.
@@ -56,7 +63,10 @@ func New(svc *rx.Service, opt Options) *Server {
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
 	}
-	s := &Server{svc: svc, opt: opt, log: opt.Logger}
+	s := &Server{svc: svc, opt: opt, log: opt.Logger, confirms: opt.Confirmations, noFormSeen: map[string]struct{}{}}
+	if s.confirms == nil {
+		s.confirms = processConfirmations
+	}
 	title, instr := "Directum RX", instructions
 	if opt.Host != "" {
 		// Подключено несколько систем (rx и rx-rxc-test): у каждой свои данные,
@@ -119,7 +129,11 @@ func text(s string) *mcp.CallToolResult {
 }
 
 func fail(err error) (*mcp.CallToolResult, any, error) {
-	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Ошибка: " + err.Error()}}}, nil, nil
+	return failResult(err), nil, nil
+}
+
+func failResult(err error) *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Ошибка: " + err.Error()}}}
 }
 
 // --- чтение ---
@@ -447,8 +461,8 @@ func (s *Server) registerWrite() {
 		if other != nil {
 			msg += " Исполнитель задания не вы, а " + other.Name + ": RX разрешает выполнять чужие задания только замещающему."
 		}
-		if ok, err := s.confirm(ctx, req, msg); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, msg); res != nil {
+			return res, nil, nil
 		}
 		res, err := s.svc.CompleteAssignment(ctx, a, in.Result)
 		if err != nil {
@@ -480,8 +494,8 @@ func (s *Server) registerWrite() {
 		if dl != nil {
 			msg += ", срок " + s.svc.F.DateTime(dl)
 		}
-		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, msg+"?"); res != nil {
+			return res, nil, nil
 		}
 		id, err := s.svc.CreateSimpleTask(ctx, rx.SimpleTaskInput{
 			Subject: in.Subject, Text: in.Text, PerformerIDs: in.PerformerIDs, ObserverIDs: in.ObserverIDs,
@@ -509,8 +523,8 @@ func (s *Server) registerWrite() {
 		if err != nil {
 			return fail(err)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Прекратить задачу #%d «%s»? Это необратимо.", t.ID, t.Subject)); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Прекратить задачу #%d «%s»? Это необратимо.", t.ID, t.Subject)); res != nil {
+			return res, nil, nil
 		}
 		if err := s.svc.AbortTask(ctx, in.ID); err != nil {
 			return fail(err)
@@ -518,48 +532,6 @@ func (s *Server) registerWrite() {
 		s.log.Info("task aborted", "id", in.ID)
 		return text(fmt.Sprintf("Задача #%d прекращена.", in.ID)), nil, nil
 	})
-}
-
-func declined(err error) (*mcp.CallToolResult, any, error) {
-	if err != nil {
-		return fail(fmt.Errorf("подтверждение не получено: %w", err))
-	}
-	return text("Пользователь отменил действие. Ничего не изменено."), nil, nil
-}
-
-// confirm просит у хоста подтверждение, если он это умеет. Иначе считаем флаг записи согласием.
-// С RXMCP_CONFIRM=0 форму не показываем: согласие даёт сам клиент, разрешая вызов инструмента.
-func (s *Server) confirm(ctx context.Context, req *mcp.CallToolRequest, msg string) (bool, error) {
-	if s.opt.NoConfirm || req == nil || req.Session == nil {
-		return true, nil
-	}
-	caps := req.ClientCapabilities()
-	if caps == nil || caps.Elicitation == nil {
-		return true, nil
-	}
-	res, err := req.Session.Elicit(ctx, &mcp.ElicitParams{
-		Mode:    "form",
-		Message: msg,
-		RequestedSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"confirm": map[string]any{"type": "boolean", "title": "Подтверждаю", "description": "Да, выполнить"},
-			},
-			"required": []string{"confirm"},
-		},
-	})
-	if err != nil {
-		// Хост заявил elicitation, но не смог: не блокируем, флаг записи уже согласие.
-		s.log.Warn("elicitation failed", "err", err)
-		return true, nil
-	}
-	if res.Action != "accept" {
-		return false, nil
-	}
-	if v, ok := res.Content["confirm"].(bool); ok && !v {
-		return false, nil
-	}
-	return true, nil
 }
 
 // relDays ловит «через 3 дня», «+3д», «3 дня».

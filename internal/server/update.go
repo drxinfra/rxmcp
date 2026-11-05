@@ -63,8 +63,10 @@ func (s *Server) updateMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			return res, err
 		}
 		r, ok := res.(*mcp.CallToolResult)
-		// К ошибке не дописываем: модель занята ею и новость потеряется.
-		if !ok || r == nil || r.IsError {
+		// К ошибке не дописываем: модель занята ею и новость потеряется. К форме
+		// подтверждения (inputRequests) тоже: ответ с ней не может нести текст, а модель
+		// увидит только ответ на повтор.
+		if !ok || r == nil || r.IsError || r.InputRequests != nil {
 			return res, err
 		}
 		if t := s.takeUpdate(); t != "" {
@@ -95,12 +97,19 @@ func (s *Server) auditMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 				sort.Strings(keys)
 			}
 		}
-		failed := err != nil
-		if r, ok := res.(*mcp.CallToolResult); ok && r != nil && r.IsError {
-			failed = true
+		failed, asked := err != nil, false
+		if r, ok := res.(*mcp.CallToolResult); ok && r != nil {
+			failed = failed || r.IsError
+			asked = r.InputRequests != nil
 		}
-		s.log.Info("tool call", "user", s.opt.User, "tool", name, "params", strings.Join(keys, ","),
-			"error", failed, "ms", time.Since(start).Milliseconds())
+		attrs := []any{"user", s.opt.User, "tool", name, "params", strings.Join(keys, ","),
+			"error", failed, "ms", time.Since(start).Milliseconds()}
+		if asked {
+			// Протокол 2026-07-28: этот заход только показал форму подтверждения, действие
+			// будет (или не будет) в следующей строке журнала, на повторе с ответом.
+			attrs = append(attrs, "awaiting", "confirmation")
+		}
+		s.log.Info("tool call", attrs...)
 		return res, err
 	}
 }

@@ -183,12 +183,8 @@ func (s *Server) registerCatalogWrite() {
 			return fail(errors.New("action: формат Модуль/Действие, например Docflow/StartTask"))
 		}
 		params, _ := json.Marshal(in.Params)
-		yes, err := s.confirm(ctx, req, fmt.Sprintf("Вызвать действие %s/%s с параметрами %s?", module, action, params))
-		if err != nil {
-			return fail(err)
-		}
-		if !yes {
-			return declined(nil)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Вызвать действие %s/%s с параметрами %s?", module, action, params)); res != nil {
+			return res, nil, nil
 		}
 		body, err := s.opt.OData.Action(ctx, module, action, in.Params)
 		if err != nil {

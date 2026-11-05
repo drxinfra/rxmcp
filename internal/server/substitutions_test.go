@@ -209,7 +209,7 @@ func TestMyAssignmentsIncludeSubstituted(t *testing.T) {
 
 func TestMyAssignmentsSubstitutedNoneOrUnavailable(t *testing.T) {
 	for status, note := range map[int]string{
-		0:   "Действующих замещений у вас нет: показаны только ваши задания.\n",
+		0:   "RX не вернул действующих замещений на вас: показаны только ваши задания. Если вы замещаете коллегу, а здесь пусто, проверьте запись в справочнике «Замещения».\n",
 		404: "Замещения в этом RX не читаются: справочника «Замещения» нет в сервисе интеграции или на него нет прав. Показаны только ваши задания.\n",
 		403: "Замещения в этом RX не читаются: справочника «Замещения» нет в сервисе интеграции или на него нет прав. Показаны только ваши задания.\n",
 	} {
@@ -227,7 +227,7 @@ func TestMyAssignmentsSubstitutedNoneOrUnavailable(t *testing.T) {
 	// Уведомления: та же строка, но про уведомления.
 	srv, _ := newSubstRX(t, 0)
 	out, _ := substCall(t, substSession(t, srv.URL), "rx_my_assignments", map[string]any{"include_substituted": true, "notices": true})
-	if !strings.HasPrefix(out, "Действующих замещений у вас нет: показаны только ваши уведомления.\nУведомлений: 1\n") {
+	if !strings.HasPrefix(out, "RX не вернул действующих замещений на вас: показаны только ваши уведомления. Если вы замещаете коллегу, а здесь пусто, проверьте запись в справочнике «Замещения».\nУведомлений: 1\n") {
 		t.Errorf("уведомления:\n%s", out)
 	}
 }
@@ -269,32 +269,51 @@ func TestWhatsNewIncludeSubstituted(t *testing.T) {
 	}
 }
 
+// Текст подтверждения «за <ФИО>» одинаков на обоих путях: формой посреди вызова и формой
+// в ответе инструмента (2026-07-28).
 func TestCompleteSubstitutedAssignment(t *testing.T) {
-	srv, _ := newSubstRX(t, 0)
-	call := func(args map[string]any) rawCallResult {
-		return rawToolCall(t, rawCallOpts{RXURL: srv.URL + "/odata", Accept: true}, "rx_complete_assignment", args)
-	}
-	r := call(map[string]any{"id": 21})
-	if r.Asked != "Завершить простое задание #21 «Подготовить ответ» за Сидорова Анна? Исполнитель задания не вы, а Сидорова Анна: RX разрешает выполнять чужие задания только замещающему." {
-		t.Errorf("подтверждение: %q", r.Asked)
-	}
-	if r.IsError || r.Text != "Задание #21 (простое задание) выполнено за Сидорова Анна с результатом Complete." {
-		t.Errorf("ответ: %s", r.Text)
-	}
-	r = call(map[string]any{"id": 21, "result": "выполнено"})
-	if r.Asked != "Завершить простое задание #21 «Подготовить ответ» за Сидорова Анна с результатом выполнено? Исполнитель задания не вы, а Сидорова Анна: RX разрешает выполнять чужие задания только замещающему." {
-		t.Errorf("подтверждение с результатом: %q", r.Asked)
-	}
+	for _, proto := range protos {
+		t.Run(proto, func(t *testing.T) {
+			srv, _ := newSubstRX(t, 0)
+			type result struct {
+				Asked, Text string
+				IsError     bool
+			}
+			call := func(args map[string]any) result {
+				fc := &formClient{answer: &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
+				cs := dial(t, newWriteServer(t, writeServerOpts{RXURL: srv.URL + "/odata"}), proto, fc.options(), nil)
+				res := mustCall(t, cs, "rx_complete_assignment", args, nil, "")
+				r := result{Text: resultText(res), IsError: res.IsError}
+				if f := fc.shown(); len(f) == 1 {
+					r.Asked = f[0]
+				} else if len(f) > 1 {
+					t.Errorf("форм больше одной: %q", f)
+				}
+				return r
+			}
+			r := call(map[string]any{"id": 21})
+			if r.Asked != formFor21 {
+				t.Errorf("подтверждение: %q", r.Asked)
+			}
+			if r.IsError || r.Text != doneFor21 {
+				t.Errorf("ответ: %s", r.Text)
+			}
+			r = call(map[string]any{"id": 21, "result": "выполнено"})
+			if r.Asked != "Завершить простое задание #21 «Подготовить ответ» за Сидорова Анна с результатом выполнено? Исполнитель задания не вы, а Сидорова Анна: RX разрешает выполнять чужие задания только замещающему." {
+				t.Errorf("подтверждение с результатом: %q", r.Asked)
+			}
 
-	// Своё задание: как раньше.
-	r = call(map[string]any{"id": 22})
-	if r.Asked != "Завершить простое задание #22 «Своё задание»?" || r.IsError || r.Text != "Задание #22 (простое задание) завершено с результатом Complete." {
-		t.Errorf("своё задание: %q / %s", r.Asked, r.Text)
-	}
+			// Своё задание: как раньше.
+			r = call(map[string]any{"id": 22})
+			if r.Asked != "Завершить простое задание #22 «Своё задание»?" || r.IsError || r.Text != "Задание #22 (простое задание) завершено с результатом Complete." {
+				t.Errorf("своё задание: %q / %s", r.Asked, r.Text)
+			}
 
-	// Чужое без замещения: RX отказывает, ответ объясняет почему.
-	r = call(map[string]any{"id": 23})
-	if !r.IsError || !strings.Contains(r.Text, "RX не дал выполнить задание #23: выполнить его может только исполнитель (Кузнецов Пётр) или тот, кто его замещает") {
-		t.Errorf("отказ RX: %s", r.Text)
+			// Чужое без замещения: RX отказывает, ответ объясняет почему.
+			r = call(map[string]any{"id": 23})
+			if !r.IsError || !strings.Contains(r.Text, "RX не дал выполнить задание #23: выполнить его может только исполнитель (Кузнецов Пётр) или тот, кто его замещает") {
+				t.Errorf("отказ RX: %s", r.Text)
+			}
+		})
 	}
 }

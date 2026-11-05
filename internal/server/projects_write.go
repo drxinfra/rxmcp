@@ -160,8 +160,8 @@ func (s *Server) registerProjectWrite() {
 		if err != nil {
 			return fail(err)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Создать %d рисков, %s: %s?", len(in.Risks), proj, names(in.Risks, func(r riskIn) string { return r.Name }))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Создать %d рисков, %s: %s?", len(in.Risks), proj, names(in.Risks, func(r riskIn) string { return r.Name }))); res != nil {
+			return res, nil, nil
 		}
 		inputs := make([]rx.RiskInput, 0, len(in.Risks))
 		for _, r := range in.Risks {
@@ -199,8 +199,8 @@ func (s *Server) registerProjectWrite() {
 		}
 		r := riskIn{Name: in.Name, Description: in.Description, Probability: in.Probability, Impact: in.Impact, Category: in.Category,
 			Type: in.Type, Status: in.Status, MitigationPlan: in.MitigationPlan, ContingencyPlan: in.ContingencyPlan, Responsible: in.Responsible}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Изменить риск #%d «%s»?", cur.ID, cur.Name)); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Изменить риск #%d «%s»?", cur.ID, cur.Name)); res != nil {
+			return res, nil, nil
 		}
 		what, err := s.svc.UpdateRisk(ctx, in.ID, r.input())
 		if err != nil {
@@ -239,8 +239,8 @@ func (s *Server) registerProjectWrite() {
 		if err != nil {
 			return fail(err)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Создать %d КТ, %s: %s?", len(in.Gates), proj, names(in.Gates, func(g gateIn) string { return g.Name + " к " + g.PlanDate }))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Создать %d КТ, %s: %s?", len(in.Gates), proj, names(in.Gates, func(g gateIn) string { return g.Name + " к " + g.PlanDate }))); res != nil {
+			return res, nil, nil
 		}
 		created, err := s.svc.CreateGates(ctx, in.ProjectID, inputs)
 		var b strings.Builder
@@ -280,8 +280,8 @@ func (s *Server) registerProjectWrite() {
 		if err != nil {
 			return fail(err)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Изменить контрольную точку #%d «%s»?", cur.ID, cur.Name)); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Изменить контрольную точку #%d «%s»?", cur.ID, cur.Name)); res != nil {
+			return res, nil, nil
 		}
 		what, err := s.svc.UpdateGate(ctx, cur, rx.GateInput{
 			Name: in.Name, Description: in.Description, Note: in.Note, Level: in.Level, Assessment: in.Assessment,

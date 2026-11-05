@@ -3,12 +3,10 @@ package server_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/drxinfra/rxmcp/internal/odata"
@@ -105,118 +103,6 @@ func TestReadOnlyHidesWriteTools(t *testing.T) {
 	}
 }
 
-// declinerCall вызывает инструмент как клиент на протоколе 2025-06-18 (так работает
-// Claude Code в VS Code): заявляет elicitation, форму не показывает и отвечает отказом.
-// Возвращает, спрашивал ли сервер форму, и текст ответа инструмента.
-func declinerCall(t *testing.T, noConfirm bool, tool string, args map[string]any) (bool, string) {
-	t.Helper()
-	r := rawToolCall(t, rawCallOpts{RXURL: "http://127.0.0.1:1/odata", NoConfirm: noConfirm}, tool, args)
-	return r.Elicited, r.Text
-}
-
-// rawCallOpts как вызвать инструмент в rawToolCall.
-type rawCallOpts struct {
-	RXURL     string // OData фейка RX
-	NoConfirm bool   // RXMCP_CONFIRM=0
-	Accept    bool   // на форму подтверждения ответить согласием, иначе отказом
-}
-
-// rawCallResult что вышло: спрашивал ли сервер форму, её текст и ответ инструмента.
-type rawCallResult struct {
-	Elicited bool
-	Asked    string
-	Text     string
-	IsError  bool
-}
-
-// rawToolCall вызывает инструмент сырым JSON-RPC на протоколе 2025-06-18, заявляя
-// elicitation. Клиент SDK по умолчанию говорит на 2026-07-28, где сервер не может
-// спросить форму посреди вызова (SEP-2322), поэтому текст подтверждения ловим так.
-func rawToolCall(t *testing.T, o rawCallOpts, tool string, args map[string]any) rawCallResult {
-	t.Helper()
-	cl, err := odata.New(odata.Options{BaseURL: o.RXURL, Auth: "basic", Login: "ivanov", Password: "secret"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := rx.New(cl, "ivanov", 0, 20, 100, rx.Formatter{Loc: time.UTC})
-	s := server.New(svc, server.Options{Version: "test", AllowWrite: true, NoConfirm: o.NoConfirm, MaxTextChars: 20000})
-	ct, st := mcp.NewInMemoryTransports()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ss, err := s.MCP.Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ss.Close()
-	conn, err := ct.Connect(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	send := func(v map[string]any) {
-		v["jsonrpc"] = "2.0"
-		b, _ := json.Marshal(v)
-		m, err := jsonrpc.DecodeMessage(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := conn.Write(ctx, m); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// readResponse ждёт ответ на запрос id, по дороге отвечая на формы.
-	var out rawCallResult
-	readResponse := func(id int) json.RawMessage {
-		for {
-			m, err := conn.Read(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			switch x := m.(type) {
-			case *jsonrpc.Request:
-				if x.Method == "elicitation/create" {
-					out.Elicited = true
-					var p struct {
-						Message string `json:"message"`
-					}
-					json.Unmarshal(x.Params, &p)
-					out.Asked = p.Message
-					answer := map[string]any{"action": "decline"}
-					if o.Accept {
-						answer = map[string]any{"action": "accept", "content": map[string]any{"confirm": true}}
-					}
-					send(map[string]any{"id": x.ID.Raw(), "result": answer})
-				}
-			case *jsonrpc.Response:
-				if fmt.Sprint(x.ID.Raw()) == fmt.Sprint(id) { // число приходит как int64
-					if x.Error != nil {
-						t.Fatalf("ответ %v: %v", id, x.Error)
-					}
-					return x.Result
-				}
-			}
-		}
-	}
-	send(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{
-		"protocolVersion": "2025-06-18", "capabilities": map[string]any{"elicitation": map[string]any{}},
-		"clientInfo": map[string]any{"name": "vscode-like", "version": "0"},
-	}})
-	readResponse(1)
-	send(map[string]any{"method": "notifications/initialized", "params": map[string]any{}})
-	send(map[string]any{"id": 2, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}})
-	var res struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
-	}
-	if err := json.Unmarshal(readResponse(2), &res); err != nil || len(res.Content) == 0 {
-		t.Fatalf("ответ инструмента не разобран: %v", err)
-	}
-	out.Text, out.IsError = res.Content[0].Text, res.IsError
-	return out
-}
-
 func TestBoardWriteToolsAndConfirm(t *testing.T) {
 	tools := toolNames(t, connect(t, true, "http://127.0.0.1:1/odata"))
 	for _, n := range []string{"rx_create_column", "rx_delete_tickets"} {
@@ -231,15 +117,22 @@ func TestBoardWriteToolsAndConfirm(t *testing.T) {
 		t.Error("удаление видно без RXMCP_ALLOW_WRITE")
 	}
 	args := map[string]any{"board": "2", "name": "Новая"}
-	// С формой: клиент молча отказал — в RX ничего не уходит.
-	asked, out := declinerCall(t, false, "rx_create_column", args)
-	if !asked || !strings.Contains(out, "отменил") {
-		t.Errorf("с формой ждали вопрос и отмену: asked=%v %q", asked, out)
-	}
-	// RXMCP_CONFIRM=0: формы нет, запрос идёт в RX (фейка нет, отсюда ошибка связи).
-	asked, out = declinerCall(t, true, "rx_create_column", args)
-	if asked || !strings.Contains(out, "нет связи") {
-		t.Errorf("без формы ждали запрос в RX: asked=%v %q", asked, out)
+	for _, proto := range protos {
+		for _, noConfirm := range []bool{false, true} {
+			// Клиент показывает форму и отвечает отказом.
+			fc := &formClient{answer: &mcp.ElicitResult{Action: "decline"}}
+			cs := dial(t, newWriteServer(t, writeServerOpts{RXURL: "http://127.0.0.1:1/odata", NoConfirm: noConfirm}), proto, fc.options(), nil)
+			out := resultText(mustCall(t, cs, "rx_create_column", args, nil, ""))
+			asked := len(fc.shown()) > 0
+			// С формой отказ: в RX ничего не уходит.
+			if !noConfirm && (!asked || !strings.Contains(out, "отменил")) {
+				t.Errorf("%s: с формой ждали вопрос и отмену: asked=%v %q", proto, asked, out)
+			}
+			// RXMCP_CONFIRM=0: формы нет, запрос идёт в RX (фейка нет, отсюда ошибка связи).
+			if noConfirm && (asked || !strings.Contains(out, "нет связи")) {
+				t.Errorf("%s: без формы ждали запрос в RX: asked=%v %q", proto, asked, out)
+			}
+		}
 	}
 }
 

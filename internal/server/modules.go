@@ -457,8 +457,8 @@ func (s *Server) registerBoardWrite() {
 		if in.WipLimit > 0 {
 			msg += fmt.Sprintf(", лимит %d", in.WipLimit)
 		}
-		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, msg+"?"); res != nil {
+			return res, nil, nil
 		}
 		b, col, pos, notes, err := s.svc.CreateColumn(ctx, rx.ColumnInput{
 			Board: in.Board, Name: in.Name, Position: in.Position, IsFinal: in.IsFinal, WipLimit: in.WipLimit,
@@ -490,8 +490,8 @@ func (s *Server) registerBoardWrite() {
 		if label == "" {
 			label = fmt.Sprintf("#%d", t.ID)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Добавить комментарий к карточке %s «%s»?", label, t.Name)); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Добавить комментарий к карточке %s «%s»?", label, t.Name)); res != nil {
+			return res, nil, nil
 		}
 		if err := s.svc.AddTicketComment(ctx, t, in.Text); err != nil {
 			return fail(err)
@@ -516,8 +516,8 @@ func (s *Server) registerBoardWrite() {
 		if err != nil {
 			return fail(err)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Заменить текст комментария #%d на карточке %s «%s»?\nБыло: %s\nСтанет: %s", c.ID, label, t.Name, oneLine(c.Text), oneLine(in.Text))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Заменить текст комментария #%d на карточке %s «%s»?\nБыло: %s\nСтанет: %s", c.ID, label, t.Name, oneLine(c.Text), oneLine(in.Text))); res != nil {
+			return res, nil, nil
 		}
 		if err := s.svc.UpdateTicketComment(ctx, t, c.ID, in.Text); err != nil {
 			return fail(err)
@@ -539,8 +539,8 @@ func (s *Server) registerBoardWrite() {
 		if err != nil {
 			return fail(err)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Удалить комментарий #%d на карточке %s «%s»: %s?", c.ID, label, t.Name, oneLine(c.Text))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Удалить комментарий #%d на карточке %s «%s»: %s?", c.ID, label, t.Name, oneLine(c.Text))); res != nil {
+			return res, nil, nil
 		}
 		if err := s.svc.DeleteTicketComment(ctx, t, c.ID); err != nil {
 			return fail(err)
@@ -562,8 +562,8 @@ func (s *Server) registerBoardWrite() {
 			return fail(err)
 		}
 		msg := fmt.Sprintf("Удалить с доски карточки (%d): %s?", len(ts), ticketLabels(ts, 10))
-		if ok, err := s.confirm(ctx, req, msg); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, msg); res != nil {
+			return res, nil, nil
 		}
 		res, err := s.svc.RemoveTickets(ctx, ts)
 		if res != nil {
@@ -624,8 +624,8 @@ func (s *Server) registerBoardWrite() {
 		if len(atts) > 0 {
 			msg += ", вложения: " + strings.Join(attLabels, "; ")
 		}
-		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, msg+"?"); res != nil {
+			return res, nil, nil
 		}
 		t, b, col, notes, err := s.svc.CreateTicket(ctx, rx.TicketInput{
 			Board: in.Board, Column: in.Column, Name: in.Name, Description: in.Description,
@@ -708,8 +708,8 @@ func (s *Server) registerBoardWrite() {
 		if uid == "" {
 			uid = fmt.Sprintf("#%d", cur.ID)
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Изменить карточку %s «%s»: %s?", uid, cur.Name, strings.Join(what, ", "))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Изменить карточку %s «%s»: %s?", uid, cur.Name, strings.Join(what, ", "))); res != nil {
+			return res, nil, nil
 		}
 		t, notes, err := s.svc.UpdateTicket(ctx, in.ID, rx.TicketInput{
 			Name: in.Name, Description: in.Description, Deadline: dl, Priority: in.Priority,

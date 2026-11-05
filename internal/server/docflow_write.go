@@ -68,8 +68,8 @@ func (s *Server) registerDocflowWrite() {
 		if in.Electronic {
 			kind = "электронное ознакомление (с подписью)"
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Отправить документ %s на %s сотрудникам %v, срок %s?", doc, kind, in.PerformerIDs, s.svc.F.DateTime(&dl))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Отправить документ %s на %s сотрудникам %v, срок %s?", doc, kind, in.PerformerIDs, s.svc.F.DateTime(&dl))); res != nil {
+			return res, nil, nil
 		}
 		id, err := s.svc.SendForAcquaintance(ctx, rx.AcquaintanceInput{DocumentID: in.DocumentID, PerformerIDs: in.PerformerIDs, Text: in.Text, Electronic: in.Electronic, Deadline: dl})
 		if err != nil {
@@ -115,8 +115,8 @@ func (s *Server) registerDocflowWrite() {
 				msg += fmt.Sprintf(", подписант %d", in.SignatoryID)
 			}
 		}
-		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, msg+"?"); res != nil {
+			return res, nil, nil
 		}
 		id, err := s.svc.SendForApproval(ctx, rx.ApprovalInput{DocumentID: in.DocumentID, ApproverIDs: in.ApproverIDs, Text: in.Text, Deadline: dl, ByRule: byRule, SignatoryID: in.SignatoryID})
 		if err != nil {
@@ -131,8 +131,8 @@ func (s *Server) registerDocflowWrite() {
 		Description: "Создать статью базы знаний в области: название и текст в markdown. Статья создаётся от имени пользователя и видна по правам области. Нужен Id области из rx_kb_areas. Перед созданием проверьте через rx_kb_search, что такой статьи ещё нет. Меняет данные в RX. Перед вызовом покажите пользователю название и начало текста.",
 		Annotations: rw("Создать статью", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in createArticleIn) (*mcp.CallToolResult, any, error) {
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Создать статью «%s» в области %d (%d символов текста)?", in.Title, in.AreaID, len([]rune(in.Text)))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Создать статью «%s» в области %d (%d символов текста)?", in.Title, in.AreaID, len([]rune(in.Text)))); res != nil {
+			return res, nil, nil
 		}
 		id, err := s.svc.CreateArticle(ctx, in.Title, in.Text, in.AreaID)
 		if err != nil {
@@ -157,8 +157,8 @@ func (s *Server) registerDocflowWrite() {
 		if len(what) == 0 {
 			return fail(errors.New("нечего менять: передайте title или text"))
 		}
-		if ok, err := s.confirm(ctx, req, fmt.Sprintf("Изменить статью #%d: %s?", in.ID, strings.Join(what, ", "))); err != nil || !ok {
-			return declined(err)
+		if res := s.confirm(ctx, req, fmt.Sprintf("Изменить статью #%d: %s?", in.ID, strings.Join(what, ", "))); res != nil {
+			return res, nil, nil
 		}
 		if err := s.svc.UpdateArticle(ctx, in.ID, in.Title, in.Text); err != nil {
 			return fail(err)
