@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +28,10 @@ type Service struct {
 	mu   sync.Mutex
 	me   *Me
 	meAt time.Time
+	// Кого пользователь замещает (Substitutions): ответ и время, когда он получен.
+	subs    []Substitution
+	subsErr error
+	subsAt  time.Time
 }
 
 // Me описание текущего пользователя.
@@ -182,9 +187,12 @@ type AssignmentFilter struct {
 	CreatedSince *time.Time
 	// DueBefore только со сроком раньше этого момента.
 	DueBefore *time.Time
+	// Substituted Id тех, кого пользователь замещает (Substitutions): их задания
+	// добавляются к своим и получают For. Пусто = только свои, запрос как раньше.
+	Substituted []int64
 }
 
-// MyAssignments список моих заданий.
+// MyAssignments список моих заданий, а с fl.Substituted ещё и заданий замещаемых.
 func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Assignment, *int64, error) {
 	me, err := s.WhoAmI(ctx)
 	if err != nil {
@@ -194,7 +202,23 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 	if fl.Notices {
 		set = "INotices"
 	}
+	expand := "Author($select=Id,Name),Task($select=Id,Subject,Status)"
+	performers := []int64{me.ID}
+	for _, id := range fl.Substituted {
+		if id > 0 && !slices.Contains(performers, id) {
+			performers = append(performers, id)
+		}
+	}
 	parts := []string{fmt.Sprintf("Performer/Id eq %d", me.ID)}
+	if len(performers) > 1 {
+		ors := make([]string, len(performers))
+		for i, id := range performers {
+			ors[i] = fmt.Sprintf("Performer/Id eq %d", id)
+		}
+		parts[0] = "(" + strings.Join(ors, " or ") + ")"
+		// Исполнитель нужен, чтобы отличить чужие строки от своих.
+		expand = "Performer($select=Id,Name)," + expand
+	}
 	order := "Deadline asc,Created desc"
 	now := time.Now().UTC().Format(time.RFC3339)
 	switch normStatus(fl.Status, "in_process", "overdue", "unread", "completed", "all") {
@@ -228,7 +252,7 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 	page, err := s.c.List(ctx, set, odata.Query{
 		Filter:  strings.Join(parts, " and "),
 		Select:  sel,
-		Expand:  "Author($select=Id,Name),Task($select=Id,Subject,Status)",
+		Expand:  expand,
 		OrderBy: order,
 		Top:     s.limit(fl.Limit),
 		Count:   true,
@@ -241,6 +265,10 @@ func (s *Service) MyAssignments(ctx context.Context, fl AssignmentFilter) ([]Ass
 		var a Assignment
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return nil, nil, err
+		}
+		if len(performers) > 1 && a.Performer != nil && a.Performer.ID != me.ID {
+			p := *a.Performer
+			a.For = &p
 		}
 		out = append(out, a)
 	}
@@ -705,6 +733,15 @@ func (s *Service) CompleteAssignment(ctx context.Context, a *Assignment, result 
 	_, err := s.c.Action(ctx, "Docflow", "CompleteAssignment", map[string]any{"assignmentId": a.ID, "result": res})
 	if err != nil {
 		var oe *odata.Error
+		// Чужое задание без замещения: RX отвечает «Только исполнитель или замещающие
+		// пользователи могут выполнить задание». Это не про результат, говорим прямо.
+		if errors.As(err, &oe) && strings.Contains(strings.ToLower(oe.Detail), "замещающ") {
+			who := "исполнитель"
+			if a.Performer != nil && a.Performer.Name != "" {
+				who += " (" + a.Performer.Name + ")"
+			}
+			return res, fmt.Errorf("RX не дал выполнить задание #%d: выполнить его может только %s или тот, кто его замещает по справочнику «Замещения». Чтобы выполнять задания коллеги, попросите его или администратора RX оформить замещение на вас", a.ID, who)
+		}
 		if errors.As(err, &oe) && oe.Status == 400 {
 			return res, fmt.Errorf("RX не принял результат %q: %s. Допустимые: %s", res, oe.Detail, a.ResultsHint())
 		}

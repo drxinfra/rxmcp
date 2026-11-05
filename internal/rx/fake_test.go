@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,47 @@ type fakeRX struct {
 	mu      sync.Mutex
 	calls   []string
 	actions []map[string]any
+	// Справочник «Замещения»: subsStatus != 0 отвечает этим кодом, иначе записи subs
+	// (пусто = 204, как RX на пустую выборку) с учётом $skip, не больше subsCap за раз
+	// (0 = без предела). Задаётся через setSubs.
+	subs       []any
+	subsStatus int
+	subsCap    int
+}
+
+func (f *fakeRX) setSubs(status int, items ...any) {
+	f.mu.Lock()
+	f.subs, f.subsStatus = items, status
+	f.mu.Unlock()
+}
+
+// count сколько было запросов, в строке которых есть sub.
+func (f *fakeRX) count(sub string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.Contains(c, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// query параметры последнего запроса к набору path с таким $filter.
+func (f *fakeRX) query(path, filter string) (url.Values, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.calls) - 1; i >= 0; i-- {
+		p, q, _ := strings.Cut(f.calls[i], "?")
+		if !strings.HasSuffix(p, "/"+path) {
+			continue
+		}
+		if v, err := url.ParseQuery(q); err == nil && v.Get("$filter") == filter {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 func newFake(t *testing.T) *fakeRX {
@@ -119,6 +161,18 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 			jsonOut(w, coll(map[string]any{"Id": 101, "Subject": "Просроченное", "Status": "InProcess", "Deadline": "2020-01-01T10:00:00Z", "Created": "2019-12-01T10:00:00Z", "IsRead": true, "Author": map[string]any{"Id": 9, "Name": "Петров Пётр"}, "Task": map[string]any{"Id": 500, "Subject": "Задача", "Status": "InProcess"}}))
 			return
 		}
+		if strings.Contains(filter, "Performer/Id eq 12") {
+			// Задания с замещаемой Сидоровой (#12): исполнитель нужен в ответе, иначе
+			// чужие строки от своих не отличить.
+			if !strings.Contains(q.Get("$expand"), "Performer($select=Id,Name)") {
+				f.t.Errorf("задания с замещаемыми без исполнителя в $expand: %s", q.Get("$expand"))
+			}
+			jsonOut(w, coll(
+				map[string]any{"Id": 102, "Subject": "Согласовать договор", "Status": "InProcess", "Importance": "High", "Deadline": "2099-01-01T10:00:00Z", "Created": "2026-09-01T10:00:00Z", "IsRead": false, "Author": map[string]any{"Id": 9, "Name": "Петров Пётр"}, "Performer": map[string]any{"Id": 7, "Name": "Иванов Иван"}},
+				map[string]any{"Id": 103, "Subject": "Подготовить ответ на письмо", "Status": "InProcess", "Deadline": "2026-09-11T15:00:00Z", "Created": "2026-09-09T10:00:00Z", "IsRead": false, "Author": map[string]any{"Id": 9, "Name": "Петров Пётр"}, "Performer": map[string]any{"Id": 12, "Name": "Сидорова Анна"}, "Task": map[string]any{"Id": 501, "Subject": "Ответ на письмо", "Status": "InProcess"}},
+			))
+			return
+		}
 		jsonOut(w, coll(
 			map[string]any{"Id": 101, "Subject": "Просроченное", "Status": "InProcess", "Deadline": "2020-01-01T10:00:00Z", "Created": "2019-12-01T10:00:00Z", "IsRead": true, "Author": map[string]any{"Id": 9, "Name": "Петров Пётр"}, "Task": map[string]any{"Id": 500, "Subject": "Задача", "Status": "InProcess"}},
 			map[string]any{"Id": 102, "Subject": "Согласовать договор", "Status": "InProcess", "Importance": "High", "Deadline": "2099-01-01T10:00:00Z", "Created": "2026-09-01T10:00:00Z", "IsRead": false, "Author": map[string]any{"Id": 9, "Name": "Петров Пётр"}},
@@ -131,6 +185,31 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 			"AttachmentDetails": []any{map[string]any{"AttachmentId": 300}}})
 	case p == "IAssignments(555)":
 		jsonOut(w, map[string]any{"@odata.type": "#Sungero.IntegrationService.Models.Generated.Workflow.IReviewAssignmentDto", "Id": 555, "Subject": "Приёмка", "Status": "InProcess"})
+	case p == "IAssignments(556)":
+		jsonOut(w, map[string]any{"@odata.type": "#Sungero.IntegrationService.Models.Generated.Workflow.ISimpleAssignmentDto", "Id": 556, "Subject": "Чужое задание", "Status": "InProcess",
+			"Performer": map[string]any{"Id": 15, "Name": "Кузнецов Пётр"}})
+	case p == "ISubstitutions":
+		if filter != "Substitute/Id eq 7 and Status eq 'Active'" {
+			f.t.Errorf("фильтр замещений: %s", filter)
+		}
+		f.mu.Lock()
+		status, items, pageCap := f.subsStatus, f.subs, f.subsCap
+		f.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
+		total := len(items)
+		skip, _ := strconv.Atoi(q.Get("$skip"))
+		items = items[min(skip, total):]
+		if pageCap > 0 && len(items) > pageCap {
+			items = items[:pageCap] // сервер с меньшим пределом страницы, чем $top
+		}
+		if len(items) == 0 {
+			jsonOut(w, nil)
+			return
+		}
+		jsonOut(w, map[string]any{"@odata.count": total, "value": items})
 	case p == "IAssignments(999)":
 		w.WriteHeader(404)
 	case p == "INotices(999)":
@@ -211,6 +290,11 @@ func (f *fakeRX) handle(w http.ResponseWriter, r *http.Request) {
 			if m["assignmentId"] == float64(555) && res != "Accepted" && res != "ForRework" {
 				w.WriteHeader(400)
 				w.Write([]byte(`"Элемент перечисления \"Result\" со значением \"` + res + `\" недопустим"`))
+				return
+			}
+			if m["assignmentId"] == float64(556) { // чужое задание, замещения нет
+				w.WriteHeader(400)
+				w.Write([]byte(`{"error":{"code":"","message":"Только исполнитель или замещающие пользователи могут выполнить задание."}}`))
 				return
 			}
 		}

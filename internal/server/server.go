@@ -127,10 +127,11 @@ func fail(err error) (*mcp.CallToolResult, any, error) {
 type emptyIn struct{}
 
 type myAssignmentsIn struct {
-	Status  string `json:"status,omitempty" jsonschema:"in_process (по умолчанию), overdue, unread, completed, all"`
-	Notices bool   `json:"notices,omitempty" jsonschema:"true = уведомления вместо заданий"`
-	Subject string `json:"subject,omitempty" jsonschema:"подстрока темы задания, регистр не важен"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
+	Status             string `json:"status,omitempty" jsonschema:"in_process (по умолчанию), overdue, unread, completed, all"`
+	Notices            bool   `json:"notices,omitempty" jsonschema:"true = уведомления вместо заданий"`
+	Subject            string `json:"subject,omitempty" jsonschema:"подстрока темы задания, регистр не важен"`
+	Limit              int    `json:"limit,omitempty" jsonschema:"сколько строк показать, по умолчанию 20, максимум 100"`
+	IncludeSubstituted bool   `json:"include_substituted,omitempty" jsonschema:"true = добавить задания тех, кого пользователь замещает по справочнику «Замещения»: руководителя, если пользователь его помощник, или коллегу в отпуске; их строки помечены « · за <ФИО>». По умолчанию только свои"`
 }
 
 type assignmentIDIn struct {
@@ -205,7 +206,7 @@ type findEmployeesIn struct {
 func (s *Server) registerRead() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_whoami",
-		Description: "Кто текущий пользователь в Directum RX: имя, Id, должность, подразделение. Вызывайте первым, если неизвестно, от чьего имени идёт работа. Параметров нет, ничего не меняет.",
+		Description: "Кто текущий пользователь в Directum RX: имя, Id, должность, подразделение и кого он сейчас замещает по справочнику «Замещения». Вызывайте первым, если неизвестно, от чьего имени идёт работа. Параметров нет, ничего не меняет.",
 		Annotations: ro("Кто я в RX"),
 		// Явное пустое properties: без него схема из пустой структуры приходит как
 		// {"type":"object"}, и Ollama с шаблоном на Jinja (GigaChat и другие GGUF) отвечает
@@ -216,7 +217,11 @@ func (s *Server) registerRead() {
 		if err != nil {
 			return fail(err)
 		}
-		out := strings.TrimRight(me.Text(), "\n") + "\nrxmcp " + s.opt.Version
+		out := strings.TrimRight(me.Text(), "\n")
+		if line := s.substitutesLine(ctx); line != "" {
+			out += "\n" + line
+		}
+		out += "\nrxmcp " + s.opt.Version
 		if t := s.updateText(); t != "" {
 			out += "\n" + t
 			s.takeUpdate() // уже сказано, второй раз в этом сеансе не нужно
@@ -226,10 +231,19 @@ func (s *Server) registerRead() {
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_my_assignments",
-		Description: "Мои входящие задания в Directum RX. Используйте для вопросов «что у меня в работе», «что просрочено», «что нового». По умолчанию задания в работе, отсортированные по сроку; status=overdue только просроченные, unread непрочитанные, completed выполненные, all все; notices=true покажет уведомления. Строка: #Id ● тема [важно] · срок · от кого · задача #Id, где ● значит не прочитано. Показывает только задания текущего пользователя. Задачи, которые отправил я сам, ищите через rx_list_tasks; подробности задания через rx_get_assignment.",
+		Description: "Мои входящие задания в Directum RX. Используйте для вопросов «что у меня в работе», «что просрочено», «что нового». По умолчанию задания в работе, отсортированные по сроку; status=overdue только просроченные, unread непрочитанные, completed выполненные, all все; notices=true покажет уведомления. Строка: #Id ● тема [важно] · срок · от кого · задача #Id, где ● значит не прочитано. include_substituted=true добавит к заданиям пользователя задания тех, кого он замещает по справочнику «Замещения»: это нужно помощнику, который ведёт входящие руководителя, и тому, кто подменяет коллегу в отпуске; такие строки заканчиваются « · за <ФИО>». Задачи, которые отправил я сам, ищите через rx_list_tasks; подробности задания через rx_get_assignment.",
 		Annotations: ro("Мои задания"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in myAssignmentsIn) (*mcp.CallToolResult, any, error) {
-		items, total, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: in.Status, Notices: in.Notices, Subject: in.Subject, Limit: in.Limit})
+		fl := rx.AssignmentFilter{Status: in.Status, Notices: in.Notices, Subject: in.Subject, Limit: in.Limit}
+		note := ""
+		if in.IncludeSubstituted {
+			kind := "задания"
+			if in.Notices {
+				kind = "уведомления"
+			}
+			fl.Substituted, note = s.substituted(ctx, kind)
+		}
+		items, total, err := s.svc.MyAssignments(ctx, fl)
 		if err != nil {
 			return fail(err)
 		}
@@ -237,7 +251,11 @@ func (s *Server) registerRead() {
 		if in.Notices {
 			what = "уведомлений"
 		}
-		return text(s.svc.AssignmentsText(items, total, what)), nil, nil
+		out := s.svc.AssignmentsText(items, total, what)
+		if note != "" {
+			out = note + "\n" + out
+		}
+		return text(out), nil, nil
 	})
 
 	mcp.AddTool(s.MCP, &mcp.Tool{
@@ -407,7 +425,7 @@ type createTaskIn struct {
 func (s *Server) registerWrite() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_complete_assignment",
-		Description: "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять или вернуть на доработку, согласовать документ (в том числе с замечаниями) или вернуть на доработку, отметить ознакомление, рассмотрение. Без result берётся стандартный результат для типа задания. Задания на подписание не выполняет: подпись ставится только в RX. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано.",
+		Description: "Выполнить задание от имени пользователя: простое задание завершить, приёмку принять или вернуть на доработку, согласовать документ (в том числе с замечаниями) или вернуть на доработку, отметить ознакомление, рассмотрение. Без result берётся стандартный результат для типа задания. Задания на подписание не выполняет: подпись ставится только в RX. Если исполнитель задания не пользователь (задание пришло по замещению, строка с « · за <ФИО>»), оно выполняется за исполнителя: RX разрешает это только замещающему, подтверждение и ответ называют, за кого. Меняет данные в RX: задание закрывается, процесс идёт дальше, отменить это нельзя. Сначала посмотрите задание через rx_get_assignment и перескажите пользователю, что будет сделано и за кого.",
 		Annotations: rw("Выполнить задание", false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in completeIn) (*mcp.CallToolResult, any, error) {
 		a, _, err := s.svc.GetAssignment(ctx, in.ID)
@@ -417,16 +435,28 @@ func (s *Server) registerWrite() {
 		if a.Status != "InProcess" {
 			return fail(fmt.Errorf("задание #%d уже %s", a.ID, rx.Status(a.Status)))
 		}
+		other := s.othersPerformer(ctx, a)
 		msg := fmt.Sprintf("Завершить %s #%d «%s»", a.KindRu(), a.ID, a.Subject)
+		if other != nil {
+			msg += " за " + other.Name
+		}
 		if in.Result != "" {
 			msg += " с результатом " + in.Result
 		}
-		if ok, err := s.confirm(ctx, req, msg+"?"); err != nil || !ok {
+		msg += "?"
+		if other != nil {
+			msg += " Исполнитель задания не вы, а " + other.Name + ": RX разрешает выполнять чужие задания только замещающему."
+		}
+		if ok, err := s.confirm(ctx, req, msg); err != nil || !ok {
 			return declined(err)
 		}
 		res, err := s.svc.CompleteAssignment(ctx, a, in.Result)
 		if err != nil {
 			return fail(err)
+		}
+		if other != nil {
+			s.log.Info("assignment completed", "id", in.ID, "result", res, "performer", other.ID)
+			return text(fmt.Sprintf("Задание #%d (%s) выполнено за %s с результатом %s.", in.ID, a.KindRu(), other.Name, res)), nil, nil
 		}
 		s.log.Info("assignment completed", "id", in.ID, "result", res)
 		return text(fmt.Sprintf("Задание #%d (%s) завершено с результатом %s.", in.ID, a.KindRu(), res)), nil, nil

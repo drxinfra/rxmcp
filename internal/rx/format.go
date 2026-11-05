@@ -159,6 +159,9 @@ func (f Formatter) AssignmentLine(a Assignment) string {
 	if a.Task != nil && a.Task.ID != 0 {
 		fmt.Fprintf(&b, " · задача #%d", a.Task.ID)
 	}
+	if a.For != nil {
+		fmt.Fprintf(&b, " · за %s", name(a.For))
+	}
 	return b.String()
 }
 

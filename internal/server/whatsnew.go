@@ -17,9 +17,10 @@ import (
 )
 
 type whatsNewIn struct {
-	Since string `json:"since,omitempty" jsonschema:"с какого момента: 24h, 3d, 1w, today, дата 2026-10-15 или 15.10.2026; по умолчанию с прошлого вызова rx_whats_new, а при первом вызове за сутки"`
-	Peek  bool   `json:"peek,omitempty" jsonschema:"true = только посмотреть, не сдвигая отметку прошлого просмотра"`
-	Limit int    `json:"limit,omitempty" jsonschema:"сколько строк в каждом разделе, по умолчанию 20, максимум 100"`
+	Since              string `json:"since,omitempty" jsonschema:"с какого момента: 24h, 3d, 1w, today, дата 2026-10-15 или 15.10.2026; по умолчанию с прошлого вызова rx_whats_new, а при первом вызове за сутки"`
+	Peek               bool   `json:"peek,omitempty" jsonschema:"true = только посмотреть, не сдвигая отметку прошлого просмотра"`
+	Limit              int    `json:"limit,omitempty" jsonschema:"сколько строк в каждом разделе, по умолчанию 20, максимум 100"`
+	IncludeSubstituted bool   `json:"include_substituted,omitempty" jsonschema:"true = добавить задания и уведомления тех, кого пользователь замещает по справочнику «Замещения»: руководителя, если пользователь его помощник, или коллегу в отпуске; их строки помечены « · за <ФИО>». По умолчанию только свои"`
 }
 
 // Отметка прошлого просмотра: одна на стенд и пользователя, в каталоге настроек.
@@ -88,7 +89,7 @@ func parseSince(v string, now time.Time, loc *time.Location) (time.Time, error) 
 func (s *Server) registerWhatsNew() {
 	mcp.AddTool(s.MCP, &mcp.Tool{
 		Name:        "rx_whats_new",
-		Description: "Что нового в Directum RX с прошлого раза: пришедшие задания и уведомления, что со сроком до конца дня (включая просроченное), какие мои задачи завершились. Используйте для вопросов «что нового», «что пришло, пока меня не было», в начале рабочего дня. По умолчанию показывает всё с прошлого вызова rx_whats_new и сдвигает отметку на текущий момент; since задаёт начало явно, peek=true не сдвигает отметку. Подробности по строке: rx_get_assignment, rx_get_task. Только чтение RX.",
+		Description: "Что нового в Directum RX с прошлого раза: пришедшие задания и уведомления, что со сроком до конца дня (включая просроченное), какие мои задачи завершились. Используйте для вопросов «что нового», «что пришло, пока меня не было», в начале рабочего дня. По умолчанию показывает всё с прошлого вызова rx_whats_new и сдвигает отметку на текущий момент; since задаёт начало явно, peek=true не сдвигает отметку. include_substituted=true добавит задания и уведомления тех, кого пользователь замещает (руководителя, если пользователь его помощник, или коллегу в отпуске), их строки заканчиваются « · за <ФИО>». Подробности по строке: rx_get_assignment, rx_get_task. Только чтение RX.",
 		Annotations: ro("Что нового"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in whatsNewIn) (*mcp.CallToolResult, any, error) {
 		now := time.Now()
@@ -116,18 +117,25 @@ func (s *Server) registerWhatsNew() {
 		endOfDay := time.Date(y, m, d+1, 0, 0, 0, 0, loc)
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "Что нового в RX с %s (%s).\n\n", s.svc.F.DateTime(&since), why)
+		fmt.Fprintf(&b, "Что нового в RX с %s (%s).\n", s.svc.F.DateTime(&since), why)
+		var subst []int64
+		if in.IncludeSubstituted {
+			var note string
+			subst, note = s.substituted(ctx, "задания и уведомления")
+			b.WriteString(note + "\n")
+		}
+		b.WriteString("\n")
 
-		items, total, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: "all", CreatedSince: &since, Limit: in.Limit})
+		items, total, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: "all", CreatedSince: &since, Limit: in.Limit, Substituted: subst})
 		if err != nil {
 			return fail(err)
 		}
 		b.WriteString(section(s.svc, items, total, "новых заданий", "Новых заданий нет."))
-		notes, ntotal, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: "all", Notices: true, CreatedSince: &since, Limit: in.Limit})
+		notes, ntotal, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: "all", Notices: true, CreatedSince: &since, Limit: in.Limit, Substituted: subst})
 		if err == nil {
 			b.WriteString("\n\n" + section(s.svc, notes, ntotal, "новых уведомлений", "Новых уведомлений нет."))
 		}
-		due, dtotal, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: "in_process", DueBefore: &endOfDay, Limit: in.Limit})
+		due, dtotal, err := s.svc.MyAssignments(ctx, rx.AssignmentFilter{Status: "in_process", DueBefore: &endOfDay, Limit: in.Limit, Substituted: subst})
 		if err == nil {
 			b.WriteString("\n\n" + section(s.svc, due, dtotal, "заданий со сроком до конца дня, включая просроченные", "Заданий со сроком сегодня и просроченных нет."))
 		}

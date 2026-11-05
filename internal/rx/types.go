@@ -69,6 +69,9 @@ type Assignment struct {
 	Task        *TaskRef     `json:"Task"`
 	Texts       []Text       `json:"Texts"`
 	Attachments []Attachment `json:"AttachmentDetails"`
+	// For исполнитель чужого задания, пришедшего в список по замещению
+	// (AssignmentFilter.Substituted): строка помечается «за <ФИО>». Из RX не читается.
+	For *Ref `json:"-"`
 }
 
 // Task задача.

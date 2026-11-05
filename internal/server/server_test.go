@@ -110,12 +110,36 @@ func TestReadOnlyHidesWriteTools(t *testing.T) {
 // Возвращает, спрашивал ли сервер форму, и текст ответа инструмента.
 func declinerCall(t *testing.T, noConfirm bool, tool string, args map[string]any) (bool, string) {
 	t.Helper()
-	cl, err := odata.New(odata.Options{BaseURL: "http://127.0.0.1:1/odata", Auth: "basic", Login: "ivanov", Password: "secret"})
+	r := rawToolCall(t, rawCallOpts{RXURL: "http://127.0.0.1:1/odata", NoConfirm: noConfirm}, tool, args)
+	return r.Elicited, r.Text
+}
+
+// rawCallOpts как вызвать инструмент в rawToolCall.
+type rawCallOpts struct {
+	RXURL     string // OData фейка RX
+	NoConfirm bool   // RXMCP_CONFIRM=0
+	Accept    bool   // на форму подтверждения ответить согласием, иначе отказом
+}
+
+// rawCallResult что вышло: спрашивал ли сервер форму, её текст и ответ инструмента.
+type rawCallResult struct {
+	Elicited bool
+	Asked    string
+	Text     string
+	IsError  bool
+}
+
+// rawToolCall вызывает инструмент сырым JSON-RPC на протоколе 2025-06-18, заявляя
+// elicitation. Клиент SDK по умолчанию говорит на 2026-07-28, где сервер не может
+// спросить форму посреди вызова (SEP-2322), поэтому текст подтверждения ловим так.
+func rawToolCall(t *testing.T, o rawCallOpts, tool string, args map[string]any) rawCallResult {
+	t.Helper()
+	cl, err := odata.New(odata.Options{BaseURL: o.RXURL, Auth: "basic", Login: "ivanov", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := rx.New(cl, "ivanov", 0, 20, 100, rx.Formatter{Loc: time.UTC})
-	s := server.New(svc, server.Options{Version: "test", AllowWrite: true, NoConfirm: noConfirm, MaxTextChars: 20000})
+	s := server.New(svc, server.Options{Version: "test", AllowWrite: true, NoConfirm: o.NoConfirm, MaxTextChars: 20000})
 	ct, st := mcp.NewInMemoryTransports()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -140,8 +164,8 @@ func declinerCall(t *testing.T, noConfirm bool, tool string, args map[string]any
 			t.Fatal(err)
 		}
 	}
-	// readResponse ждёт ответ на запрос id, по дороге отвечая отказом на формы.
-	elicited := false
+	// readResponse ждёт ответ на запрос id, по дороге отвечая на формы.
+	var out rawCallResult
 	readResponse := func(id int) json.RawMessage {
 		for {
 			m, err := conn.Read(ctx)
@@ -151,8 +175,17 @@ func declinerCall(t *testing.T, noConfirm bool, tool string, args map[string]any
 			switch x := m.(type) {
 			case *jsonrpc.Request:
 				if x.Method == "elicitation/create" {
-					elicited = true
-					send(map[string]any{"id": x.ID.Raw(), "result": map[string]any{"action": "decline"}})
+					out.Elicited = true
+					var p struct {
+						Message string `json:"message"`
+					}
+					json.Unmarshal(x.Params, &p)
+					out.Asked = p.Message
+					answer := map[string]any{"action": "decline"}
+					if o.Accept {
+						answer = map[string]any{"action": "accept", "content": map[string]any{"confirm": true}}
+					}
+					send(map[string]any{"id": x.ID.Raw(), "result": answer})
 				}
 			case *jsonrpc.Response:
 				if fmt.Sprint(x.ID.Raw()) == fmt.Sprint(id) { // число приходит как int64
@@ -175,11 +208,13 @@ func declinerCall(t *testing.T, noConfirm bool, tool string, args map[string]any
 		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
+		IsError bool `json:"isError"`
 	}
 	if err := json.Unmarshal(readResponse(2), &res); err != nil || len(res.Content) == 0 {
 		t.Fatalf("ответ инструмента не разобран: %v", err)
 	}
-	return elicited, res.Content[0].Text
+	out.Text, out.IsError = res.Content[0].Text, res.IsError
+	return out
 }
 
 func TestBoardWriteToolsAndConfirm(t *testing.T) {
