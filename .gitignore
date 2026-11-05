@@ -8,3 +8,4 @@
 *.local
 .DS_Store
 /bin/
+.leakcheck

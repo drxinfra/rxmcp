@@ -19,6 +19,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: hack/leakcheck.sh
+        env:
+          LEAKCHECK_PATTERN: ${{ secrets.LEAKCHECK_PATTERN }}
       - run: go test ./...
       # Гейт выпуска: с известной исправимой уязвимостью HIGH/CRITICAL релиз не публикуется.
       - run: hack/install-trivy.sh && echo "$PWD/bin" >> "$GITHUB_PATH"
